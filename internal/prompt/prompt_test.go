@@ -197,6 +197,9 @@ func TestAdvise(t *testing.T) {
 	if _, err := Advise(context.Background(), "echo oops >&2; exit 3", "x"); err == nil || !strings.Contains(err.Error(), "oops") {
 		t.Errorf("failing command: %v", err)
 	}
+	if _, err := Advise(context.Background(), "echo 'Not logged in'; exit 1", "x"); err == nil || !strings.Contains(err.Error(), "Not logged in") {
+		t.Errorf("error on stdout: %v", err)
+	}
 	t.Setenv("PATH", dir)
 	if _, err := Advise(context.Background(), "", "x"); err == nil || !strings.Contains(err.Error(), "claude not found") {
 		t.Errorf("missing claude: %v", err)

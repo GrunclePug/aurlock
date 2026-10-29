@@ -105,7 +105,11 @@ func Advise(ctx context.Context, custom, prompt string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		// claude reports some errors, such as a missing login, on stdout.
 		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = strings.TrimSpace(stdout.String())
+		}
 		if msg == "" {
 			msg = err.Error()
 		}
