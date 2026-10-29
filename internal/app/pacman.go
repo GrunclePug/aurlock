@@ -9,9 +9,21 @@ import (
 )
 
 func pacmanInstalled(ctx context.Context) (map[string]string, error) {
-	out, err := exec.CommandContext(ctx, "pacman", "-Q").Output()
-	if err != nil {
-		return nil, fmt.Errorf("pacman -Q: %w", err)
+	return pacmanQuery(ctx, "-Q")
+}
+
+// pacmanForeign lists installed packages that aren't in the sync
+// repositories: AUR packages, and locally built ones.
+func pacmanForeign(ctx context.Context) (map[string]string, error) {
+	return pacmanQuery(ctx, "-Qm")
+}
+
+func pacmanQuery(ctx context.Context, op string) (map[string]string, error) {
+	out, err := exec.CommandContext(ctx, "pacman", op).Output()
+	var exit *exec.ExitError
+	// A filter that matches nothing exits 1 without output.
+	if err != nil && !(errors.As(err, &exit) && exit.ExitCode() == 1 && len(out) == 0) {
+		return nil, fmt.Errorf("pacman %s: %w", op, err)
 	}
 	have := map[string]string{}
 	for line := range strings.Lines(string(out)) {

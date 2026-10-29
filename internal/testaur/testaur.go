@@ -159,6 +159,12 @@ remove() {
 case "$op" in
 -Q)
 	cat "$s/installed" ;;
+-Qm)
+	rc=1
+	while read -r n v; do
+		grep -qx "$n" "$s/repo" || { echo "$n $v"; rc=0; }
+	done < "$s/installed"
+	exit $rc ;;
 -T)
 	rc=0
 	for d; do

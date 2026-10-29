@@ -11,7 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/grunclepug/aurlock/internal/aur"
@@ -322,7 +324,80 @@ func (a *app) list(ctx context.Context) int {
 		}
 		fmt.Fprintf(w, "  %s %s  %s  %s%s\n", in.PkgName, in.Version, short(in.Commit), in.Date, note)
 	}
+
+	untracked, err := a.untracked(ctx)
+	if err != nil {
+		return a.fail(err)
+	}
+	if len(untracked) == 0 {
+		return exitOK
+	}
+	fmt.Fprintln(w, "untracked foreign packages (aurlock didn't install these):")
+	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
+	var inAUR []string
+	for _, u := range untracked {
+		where := "not in the AUR"
+		switch {
+		case u.aur == unknown:
+			where = "AUR unreachable"
+		case u.aur != "":
+			where = "AUR has " + u.aur
+			inAUR = append(inAUR, u.name)
+		}
+		fmt.Fprintf(tw, "  %s %s\t%s\n", u.name, u.version, where)
+	}
+	tw.Flush()
+	if len(inAUR) > 0 {
+		fmt.Fprintln(w, "adopt them with: aurlock install <pkg>...")
+	}
 	return exitOK
+}
+
+type untrackedPkg struct {
+	name, version string
+	aur           string // AUR version, "" if not in the AUR
+}
+
+// unknown is the AUR version when the AUR can't be reached.
+const unknown = "?"
+
+// untracked lists foreign packages aurlock didn't install: ones from
+// before aurlock, and locally built ones. They're shown, never adopted
+// automatically, since a local package can share an AUR package's name.
+func (a *app) untracked(ctx context.Context) ([]untrackedPkg, error) {
+	foreign, err := pacmanForeign(ctx)
+	if err != nil {
+		return nil, err
+	}
+	log, err := store.LoadInstalled(a.paths.installed)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for name := range foreign {
+		if _, ok := log.Get(name); !ok {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	if len(names) == 0 {
+		return nil, nil
+	}
+	info, err := a.rpc.Info(ctx, names)
+	if err != nil {
+		a.warnf("%v", err)
+	}
+	var out []untrackedPkg
+	for _, n := range names {
+		u := untrackedPkg{name: n, version: foreign[n]}
+		if err != nil {
+			u.aur = unknown
+		} else if p, ok := info[n]; ok {
+			u.aur = p.Version
+		}
+		out = append(out, u)
+	}
+	return out, nil
 }
 
 func (a *app) forget(names []string) int {
@@ -399,6 +474,21 @@ func (a *app) outdated(ctx context.Context) int {
 			version = p.Version
 		}
 		fmt.Fprintf(a.Stdout, "%s %s -> %s (%s)\n", in.PkgName, in.Version, version, state)
+	}
+	// Untracked packages don't count: outdated means upgrade has work.
+	if untracked, err := a.untracked(ctx); err == nil {
+		n := 0
+		for _, u := range untracked {
+			if u.aur != "" && u.aur != unknown {
+				n++
+			}
+		}
+		switch {
+		case n == 1:
+			a.warnf("1 untracked AUR package, see aurlock list")
+		case n > 1:
+			a.warnf("%d untracked AUR packages, see aurlock list", n)
+		}
 	}
 	if found {
 		return exitFail

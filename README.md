@@ -39,7 +39,7 @@ sudo make install   # optional, to /usr/local/bin
 aurlock install solidcraft-bin   # review, approve, build and install
 aurlock upgrade                  # the same, for everything installed with aurlock
 aurlock outdated                 # list pending updates; exit 1 if any
-aurlock list                     # approvals, and what's installed here
+aurlock list                     # approvals, what's installed here, and what isn't tracked
 aurlock forget solidcraft-bin    # drop an approval (doesn't uninstall)
 aurlock -version
 ```
@@ -48,8 +48,8 @@ aurlock -version
 |---------|--------------|
 | `install <pkg>...` | Looks the packages up, fetches their git repositories, checks them, prompts, builds and installs. |
 | `upgrade` | Like `install`, for every package aurlock installed here whose AUR commit or approval moved on. |
-| `outdated` | Lists installed packages whose AUR commit differs from the installed one, and whether that commit is approved yet. Exit 1 if any, 0 if none, 2 on error. |
-| `list` | Prints the approvals and the packages installed here. |
+| `outdated` | Lists installed packages whose AUR commit differs from the installed one, and whether that commit is approved yet. Exit 1 if any, 0 if none, 2 on error. Untracked AUR packages are mentioned on stderr but don't count. |
+| `list` | Prints the approvals, the packages installed here, and foreign packages aurlock didn't install, with their AUR version if the AUR has them. |
 | `forget <pkg>...` | Drops approvals, by package base or package name. The packages stay installed. |
 
 A clean update:
@@ -95,6 +95,10 @@ aurlock upgrades only AUR packages and builds them against what's installed, so 
 | | `--noconfirm` | off | With `-S`: install approved packages without prompts, and fail any package that needs review. It never approves anything. |
 | | `--needed` | off | With `-S`: skip packages installed at the approved commit. |
 | | `--removemake` | off | With `-S`: remove the make dependencies installed for the build. |
+
+### Moving from another AUR helper
+
+aurlock only upgrades packages it installed. `aurlock list` shows the foreign packages it doesn't track. Adopt the AUR ones with `aurlock install <pkg>...`: that reviews the package at the AUR's current commit and rebuilds it, since nothing says which commit the installed build came from. aurlock never adopts packages automatically, because a locally built package can share an AUR package's name.
 
 ## Files
 

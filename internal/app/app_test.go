@@ -597,6 +597,33 @@ func TestListAndForget(t *testing.T) {
 	}
 }
 
+func TestUntracked(t *testing.T) {
+	h := newHarness(t)
+	c := strings.Repeat("c", 40)
+	h.approve("foo", c, "1.0-1", false)
+	h.markInstalled("foo", "foo", c, "1.0-1")
+	// Installed before aurlock, and a locally built package.
+	h.write("installed", h.read("installed")+"zen-browser-bin 1.23.1b-1\nstream 0.3.0-1\n")
+	h.aur.SetInfo(testaur.Package{Name: "zen-browser-bin", Base: "zen-browser-bin", Version: "1.23.4b-1", Maintainer: "x"})
+
+	code, stdout, _ := h.run("", false, "list")
+	want := "untracked foreign packages (aurlock didn't install these):\n" +
+		"  stream 0.3.0-1              not in the AUR\n" +
+		"  zen-browser-bin 1.23.1b-1   AUR has 1.23.4b-1\n" +
+		"adopt them with: aurlock install <pkg>...\n"
+	if code != 0 || !strings.HasSuffix(stdout, want) {
+		t.Errorf("list: exit %d\n%s\nwant suffix\n%s", code, stdout, want)
+	}
+
+	// foo isn't outdated: the AUR has no repository for it here, so give it one.
+	head := h.publish("foo", "1.0-1", old)
+	h.markInstalled("foo", "foo", head, "1.0-1")
+	code, stdout, stderr := h.run("", false, "outdated")
+	if code != 0 || stdout != "" || stderr != "aurlock: 1 untracked AUR package, see aurlock list\n" {
+		t.Errorf("outdated: exit %d %q %q", code, stdout, stderr)
+	}
+}
+
 func TestConflictWarning(t *testing.T) {
 	h := newHarness(t)
 	dir := filepath.Dir(h.approvedFile())
