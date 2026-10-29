@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grunclepug/aurlock/internal/check"
 	"github.com/grunclepug/aurlock/internal/prompt"
+	"github.com/grunclepug/aurlock/internal/srcinfo"
 	"github.com/grunclepug/aurlock/internal/store"
 	"github.com/grunclepug/aurlock/internal/testaur"
 )
@@ -694,5 +696,28 @@ func TestBuildsReviewedBytes(t *testing.T) {
 	built, _ := os.ReadFile(filepath.Join(h.home, ".cache", "aurlock", "build", "foo", "PKGBUILD"))
 	if string(built) != files["PKGBUILD"] {
 		t.Errorf("built PKGBUILD differs from the reviewed one:\n%s", built)
+	}
+}
+
+func TestReviewText(t *testing.T) {
+	files := pkgFiles("foo", "1.0-1")
+	files["foo.sh"] = "#!/bin/sh\nexec /opt/foo/foo \"$@\"\n"
+	files["icon.png"] = "\x89PNG\x00\x01"
+	info, err := srcinfo.Parse(strings.NewReader(files[".SRCINFO"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := &check.Snapshot{SRCINFO: info, Files: map[string][]byte{}}
+	for k, v := range files {
+		snap.Files[k] = []byte(v)
+	}
+	got := reviewText(snap)
+	for _, want := range []string{"==> PKGBUILD <==\npkgname=foo\n", "==> foo.sh <==\n#!/bin/sh\nexec /opt/foo/foo", "==> icon.png <==\n(6 bytes, binary or too large to show)\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("review text lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "==> .SRCINFO") || !strings.HasPrefix(got, "==> PKGBUILD <==") {
+		t.Errorf("order or .SRCINFO:\n%s", got)
 	}
 }

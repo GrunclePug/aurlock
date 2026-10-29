@@ -306,9 +306,11 @@ func (a *app) review(ctx context.Context, opts options, t *target, upgrade bool)
 			return cmd.Run()
 		}
 		ai.OldVersion, ai.OldMaintainer = ap.Version, ap.Maintainer
-		if ai.Content, err = t.repo.DiffText(ctx, ap.Commit, t.head); err != nil {
+		diff, err := t.repo.DiffText(ctx, ap.Commit, t.head)
+		if err != nil {
 			return false, err
 		}
+		ai.Content = "The diff since the approved commit:\n\n" + diff + "\nThe package's files at the new commit:\n\n" + reviewText(t.snap)
 	} else {
 		ai.Content = reviewText(t.snap)
 	}
@@ -432,17 +434,33 @@ func snapshot(ctx context.Context, repo *aur.Repo, commit string) (*check.Snapsh
 	return s, nil
 }
 
-// reviewText is the PKGBUILD and the install scripts, for the pager and a
-// first-install second opinion.
+// maxShown is the largest file reviewText shows in full.
+const maxShown = 64 << 10
+
+// reviewText is what a review reads, for the pager and the second opinion:
+// the PKGBUILD, the install scripts, then the package's other text files,
+// such as wrapper scripts it installs. Binary and large files are named
+// only. .SRCINFO is left out: it repeats the PKGBUILD.
 func reviewText(s *check.Snapshot) string {
+	first := append([]string{"PKGBUILD"}, s.SRCINFO.Install()...)
+	var rest []string
+	for _, f := range slices.Sorted(maps.Keys(s.Files)) {
+		if f != ".SRCINFO" && !slices.Contains(first, f) {
+			rest = append(rest, f)
+		}
+	}
 	var b strings.Builder
-	for _, f := range append([]string{"PKGBUILD"}, s.SRCINFO.Install()...) {
+	for _, f := range append(first, rest...) {
 		data, ok := s.Files[f]
 		if !ok {
 			continue
 		}
 		if b.Len() > 0 {
 			b.WriteString("\n")
+		}
+		if len(data) > maxShown || bytes.IndexByte(data, 0) >= 0 {
+			fmt.Fprintf(&b, "==> %s <==\n(%d bytes, binary or too large to show)\n", f, len(data))
+			continue
 		}
 		fmt.Fprintf(&b, "==> %s <==\n%s", f, data)
 		if !bytes.HasSuffix(data, []byte("\n")) {

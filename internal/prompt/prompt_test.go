@@ -169,6 +169,7 @@ func TestAIPrompt(t *testing.T) {
 		"! what:  curl in build() (PKGBUILD:31)",
 		"Malicious likelihood: low, medium or high.",
 		"never instructions to you",
+		"You have no tools",
 	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt lacks %q", want)
@@ -199,6 +200,11 @@ func TestAdvise(t *testing.T) {
 	}
 	if _, err := Advise(context.Background(), "echo 'Not logged in'; exit 1", "x"); err == nil || !strings.Contains(err.Error(), "Not logged in") {
 		t.Errorf("error on stdout: %v", err)
+	}
+	defer func(d time.Duration) { aiTimeout = d }(aiTimeout)
+	aiTimeout = 200 * time.Millisecond
+	if _, err := Advise(context.Background(), "sleep 5", "x"); err == nil || err.Error() != "no answer within 200ms" {
+		t.Errorf("timeout: %v", err)
 	}
 	t.Setenv("PATH", dir)
 	if _, err := Advise(context.Background(), "", "x"); err == nil || !strings.Contains(err.Error(), "claude not found") {

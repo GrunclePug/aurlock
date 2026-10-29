@@ -72,7 +72,7 @@ type "solidcraft-bin" to approve, or [c]laude / [v]iew / [d]iff / [n]o:
 |-----|--------|
 | `y` | Approve and install. Only offered when there are no flags. |
 | the package name | Approve and install a flagged package. |
-| `v` | Show the PKGBUILD and install scripts in `$PAGER`. |
+| `v` | Show the PKGBUILD, the install scripts and the package's other text files (such as wrapper scripts it installs) in `$PAGER`. |
 | `d` | Show `git diff` since the approved commit, through git's pager. Updates only. |
 | `c` | Ask Claude Code for a second opinion, then return to the prompt. |
 | `g` | Grant the build network access. This is a flag, so it then takes the name typed. Offered when the package had a grant before or its last offline build failed on the network. |
@@ -174,7 +174,7 @@ Known limitation: bubblewrap maps only your own user into the sandbox. A PKGBUIL
 
 ## Second opinion
 
-`[c]` runs `claude -p --tools "" --safe-mode --strict-mcp-config --no-session-persistence` in a fresh empty directory, with the prompt on stdin. Claude Code gets no tools, no MCP servers, hooks or other customizations, and keeps no session. The prompt has the package's name, versions, maintainer, age and flags, plus the diff (or the whole PKGBUILD and install scripts on a first install). It marks the package content as untrusted data, and asks for why each flag fired, a malicious likelihood and a recommendation in about ten lines. The answer is advice: approving still takes `y` or the typed name.
+`[c]` runs `claude -p --tools "" --safe-mode --strict-mcp-config --no-session-persistence` in a fresh empty directory, with the prompt on stdin. Claude Code gets no tools, no MCP servers, hooks or other customizations, and keeps no session. The prompt has the package's name, versions, maintainer, age and flags, plus what `[v]` shows (and on an update, the diff since the approval). It marks the package content as untrusted data, says there are no tools to fetch anything else, and asks for why each flag fired, a malicious likelihood and a recommendation in about ten lines. An answer normally takes seconds; after two minutes aurlock gives up and returns to the prompt. The answer is advice: approving still takes `y` or the typed name.
 
 Set `AURLOCK_AI` to use another command. It must not have tools either.
 

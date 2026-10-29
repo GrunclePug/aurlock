@@ -3,6 +3,7 @@ package prompt
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,10 @@ import (
 // DefaultAI can only read the prompt and answer: no tools, MCP servers,
 // hooks or other customizations, and no saved session.
 var DefaultAI = []string{"claude", "-p", "--tools", "", "--safe-mode", "--strict-mcp-config", "--no-session-persistence"}
+
+// aiTimeout is how long the second opinion may take. A normal answer takes
+// seconds.
+var aiTimeout = 2 * time.Minute
 
 // Marker separates aurlock's instructions from the package's content.
 const Marker = "=== UNTRUSTED PACKAGE CONTENT ==="
@@ -62,6 +67,8 @@ func AIPrompt(in AIInput, now time.Time) string {
 		b.WriteString(FormatFlags(in.Flags))
 	}
 	b.WriteString(`
+You have no tools: you can't read files, fetch URLs or run commands, and you get no second turn. Answer from the text below alone, in a single reply. If something you would want to check isn't included, name it under "Other concerns" instead.
+
 Answer in at most 10 lines, plain text, in exactly this shape:
 Flags: for each flag, one short line on why it fired and whether it looks benign.
 Other concerns: anything suspicious the flags missed, or "none".
@@ -96,7 +103,7 @@ func Advise(ctx context.Context, custom, prompt string) (string, error) {
 	}
 	defer os.RemoveAll(dir)
 
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, aiTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
@@ -105,6 +112,9 @@ func Advise(ctx context.Context, custom, prompt string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("no answer within %v", aiTimeout)
+		}
 		// claude reports some errors, such as a missing login, on stdout.
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
