@@ -165,7 +165,12 @@ func (a *app) process(ctx context.Context, opts options, targets []*target, upgr
 		}
 		if err != nil {
 			a.warnf("%s: %v", t.label(), err)
-			failed = true
+			// Under --noconfirm a pending review is a skip, not a failure:
+			// arcus apply -y goes on with its other steps, and a new machine
+			// installs what's approved once the approvals sync.
+			if !opts.noconfirm || !errors.Is(err, errNeedsReview) {
+				failed = true
+			}
 			continue
 		}
 		if ok {
@@ -190,7 +195,8 @@ func (a *app) process(ctx context.Context, opts options, targets []*target, upgr
 	return exitOK
 }
 
-// errNeedsReview is a review that --noconfirm can't do.
+// errNeedsReview is a review that can't happen here: --noconfirm, or no
+// terminal.
 var errNeedsReview = errors.New("needs review")
 
 // review fetches a target and decides whether it may be built: approved

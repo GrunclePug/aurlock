@@ -119,7 +119,7 @@ Day to day:
 | `PAGER` | | `less` | Pager for `[v]`. |
 | `AURLOCK_AI` | | `claude -p --tools "" ...` | Replaces the second-opinion command. It runs through `sh` and gets the prompt on stdin. It must run without tools. |
 | `LANG`, `TERM`, `MAKEFLAGS` | | | Passed into the build sandbox. Nothing else from the environment is. |
-| | `--noconfirm` | off | With `-S`: install approved packages without prompts, and fail any package that needs review. It never approves anything. |
+| | `--noconfirm` | off | With `-S`: install approved packages without prompts, and skip any package that needs review with a message. Skips don't change the exit code; real failures do. It never approves anything. |
 | | `--needed` | off | With `-S`: skip packages installed at the approved commit. |
 | | `--removemake` | off | With `-S`: remove the make dependencies installed for the build. |
 
@@ -189,6 +189,8 @@ aurlock -D --asdeps <pkg>...
 ```
 
 `-S` works like `install`. `-R...` and `-D...` run `sudo pacman` with the same arguments, and `-R` also drops removed packages from the install log. Any other pacman-style flag is an error.
+
+To use it, set `aur_helper = "aurlock"` in arcus's `config.toml`. arcus hands the helper only AUR packages that aren't installed yet. A plain `arcus apply` reviews them at aurlock's prompt. `arcus apply -y` installs the approved ones and skips the rest with a message, so a new machine installs its AUR packages without prompts once its approvals have synced.
 
 ## Development
 

@@ -379,8 +379,9 @@ func TestUpdateFlags(t *testing.T) {
 func TestNoconfirm(t *testing.T) {
 	h := newHarness(t)
 	head := h.publish("solidcraft-bin", "0.25.1-1", old)
+	// A pending review is skipped, not a failure.
 	code, stdout, stderr := h.run("", false, "--removemake", "-S", "--needed", "--noconfirm", "solidcraft-bin")
-	if code != 1 || stderr != "aurlock: solidcraft-bin: needs review: run aurlock install solidcraft-bin\n" {
+	if code != 0 || stderr != "aurlock: solidcraft-bin: needs review: run aurlock install solidcraft-bin\n" {
 		t.Errorf("unapproved: exit %d\n%s\n%s", code, stdout, stderr)
 	}
 	if _, ok := h.approval("solidcraft-bin"); ok || len(h.logLines("sudo")) != 0 {
@@ -400,6 +401,26 @@ func TestNoconfirm(t *testing.T) {
 	code, _, stderr = h.run("", false, "--removemake", "-S", "--needed", "--noconfirm", "solidcraft-bin")
 	if code != 0 || stderr != "" || len(h.logLines("bwrap")) != 0 || len(h.logLines("sudo")) != 0 {
 		t.Errorf("needed: exit %d %q\n%s", code, stderr, h.read("log"))
+	}
+}
+
+func TestNoconfirmMixed(t *testing.T) {
+	h := newHarness(t)
+	head := h.publish("foo", "1.0-1", old)
+	h.approve("foo", head, "1.0-1", false)
+	h.publish("bar", "1.0-1", old)
+	code, _, stderr := h.run("", false, "-S", "--needed", "--noconfirm", "foo", "bar")
+	if code != 0 || !strings.Contains(stderr, "bar: needs review") {
+		t.Errorf("exit %d %q", code, stderr)
+	}
+	if _, ok := h.installed("foo"); !ok {
+		t.Error("approved package not installed")
+	}
+	// A real failure still fails.
+	h.write("build-fails", "error: compile failed\n")
+	h.approve("foo", h.aur.Commit("foo", author, pkgFiles("foo", "1.2-1")), "1.2-1", false)
+	if code, _, _ := h.run("", false, "-S", "--noconfirm", "foo", "bar"); code != 1 {
+		t.Errorf("build failure: exit %d", code)
 	}
 }
 
