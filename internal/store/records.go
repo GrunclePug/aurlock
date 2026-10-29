@@ -19,14 +19,12 @@ type Approval struct {
 
 const approvedHeader = "# pkgbase  commit  version  maintainer  approved  network"
 
-// Approvals is the approvals file.
 type Approvals struct {
 	path string
 	t    *Table
 }
 
-// LoadApprovals reads the approvals file at path. A missing file has no
-// approvals.
+// LoadApprovals reads path. A missing file has no approvals.
 func LoadApprovals(path string) (*Approvals, error) {
 	t, err := load(path, approvedHeader, 6, func(f []string) error {
 		switch {
@@ -51,7 +49,6 @@ func toApproval(f []string) Approval {
 	return Approval{PkgBase: f[0], Commit: f[1], Version: f[2], Maintainer: f[3], Date: f[4], Online: f[5] == "online"}
 }
 
-// Get returns the approval of a package base.
 func (a *Approvals) Get(pkgbase string) (Approval, bool) {
 	f, ok := a.t.Get(pkgbase)
 	if !ok {
@@ -60,7 +57,7 @@ func (a *Approvals) Get(pkgbase string) (Approval, bool) {
 	return toApproval(f), true
 }
 
-// List returns every approval, sorted by package base.
+// List is sorted by package base.
 func (a *Approvals) List() []Approval {
 	var out []Approval
 	for _, f := range a.t.Records() {
@@ -85,12 +82,10 @@ func (a *Approvals) Set(ap Approval) {
 	a.t.Set([]string{ap.PkgBase, ap.Commit, ap.Version, m, ap.Date, network})
 }
 
-// Delete drops the approval of a package base.
 func (a *Approvals) Delete(pkgbase string) bool {
 	return a.t.Delete(pkgbase)
 }
 
-// Save writes the file atomically, through a symlink if path is one.
 func (a *Approvals) Save() error {
 	return a.t.save(a.path)
 }
@@ -107,13 +102,12 @@ type Installed struct {
 
 const installedHeader = "# pkgname  pkgbase  commit  version  installed"
 
-// InstallLog is the per-machine install log.
 type InstallLog struct {
 	path string
 	t    *Table
 }
 
-// LoadInstalled reads the install log at path. A missing file is empty.
+// LoadInstalled reads path. A missing file is empty.
 func LoadInstalled(path string) (*InstallLog, error) {
 	t, err := load(path, installedHeader, 5, func(f []string) error {
 		switch {
@@ -136,7 +130,6 @@ func toInstalled(f []string) Installed {
 	return Installed{PkgName: f[0], PkgBase: f[1], Commit: f[2], Version: f[3], Date: f[4]}
 }
 
-// Get returns the record of an installed package.
 func (l *InstallLog) Get(pkgname string) (Installed, bool) {
 	f, ok := l.t.Get(pkgname)
 	if !ok {
@@ -145,7 +138,7 @@ func (l *InstallLog) Get(pkgname string) (Installed, bool) {
 	return toInstalled(f), true
 }
 
-// List returns every record, sorted by package name.
+// List is sorted by package name.
 func (l *InstallLog) List() []Installed {
 	var out []Installed
 	for _, f := range l.t.Records() {
@@ -155,17 +148,14 @@ func (l *InstallLog) List() []Installed {
 	return out
 }
 
-// Set records an installed package.
 func (l *InstallLog) Set(in Installed) {
 	l.t.Set([]string{in.PkgName, in.PkgBase, in.Commit, in.Version, in.Date})
 }
 
-// Delete drops the record of a package.
 func (l *InstallLog) Delete(pkgname string) bool {
 	return l.t.Delete(pkgname)
 }
 
-// Save writes the log atomically.
 func (l *InstallLog) Save() error {
 	return l.t.save(l.path)
 }

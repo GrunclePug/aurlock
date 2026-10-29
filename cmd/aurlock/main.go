@@ -16,6 +16,11 @@ var Version = "dev"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// The first Ctrl-C stops at the next safe point; a second one kills.
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
 	fi, err := os.Stdin.Stat()
 	tty := err == nil && fi.Mode()&os.ModeCharDevice != 0
 	code := app.Run(ctx, app.Env{

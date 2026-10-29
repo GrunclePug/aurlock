@@ -2,7 +2,6 @@ package aur_test
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -55,16 +54,23 @@ func TestRepo(t *testing.T) {
 		t.Error("IsAncestor")
 	}
 
-	data, ok, err := repo.File(ctx, c1, "PKGBUILD")
-	if err != nil || !ok || string(data) != "one\ntwo\nthree\n" {
-		t.Errorf("File = %q %v %v", data, ok, err)
+	tree, err := repo.Tree(ctx, c1)
+	if err != nil || len(tree) != 3 {
+		t.Fatalf("Tree = %+v %v", tree, err)
 	}
-	if _, ok, _ := repo.File(ctx, c2, "run.sh"); ok {
-		t.Error("deleted file found")
+	if e := tree[1]; e.Path != "PKGBUILD" || e.Mode != "100644" {
+		t.Errorf("entry = %+v", e)
 	}
-	files, _ := repo.Files(ctx, c2)
-	if !slices.Equal(files, []string{".SRCINFO", "PKGBUILD", "new.txt"}) {
-		t.Errorf("Files = %v", files)
+	if data, err := repo.Blob(ctx, tree[1].ID); err != nil || string(data) != "one\ntwo\nthree\n" {
+		t.Errorf("Blob = %q %v", data, err)
+	}
+	tree, _ = repo.Tree(ctx, c2)
+	var paths []string
+	for _, e := range tree {
+		paths = append(paths, e.Path)
+	}
+	if !slices.Equal(paths, []string{".SRCINFO", "PKGBUILD", "new.txt"}) {
+		t.Errorf("Tree paths = %v", paths)
 	}
 	changed, _ := repo.Changed(ctx, c1, c2)
 	if !slices.Equal(changed, []string{"PKGBUILD", "new.txt", "run.sh"}) {
@@ -81,14 +87,4 @@ func TestRepo(t *testing.T) {
 		t.Errorf("authors = %v", authors)
 	}
 
-	out := filepath.Join(t.TempDir(), "work")
-	if err := repo.Export(ctx, c1, out); err != nil {
-		t.Fatal(err)
-	}
-	if fi, err := os.Stat(filepath.Join(out, "run.sh")); err != nil || fi.Mode().Perm() != 0o644 {
-		t.Errorf("exported run.sh: %v %v", fi, err)
-	}
-	if _, err := os.Stat(filepath.Join(out, ".git")); err == nil {
-		t.Error("export links back to the repository")
-	}
 }

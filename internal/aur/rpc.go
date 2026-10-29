@@ -13,10 +13,8 @@ import (
 	"time"
 )
 
-// DefaultURL is the real AUR.
 const DefaultURL = "https://aur.archlinux.org"
 
-// Package is the RPC's view of one package.
 type Package struct {
 	Name           string
 	PackageBase    string
@@ -26,13 +24,11 @@ type Package struct {
 	OutOfDate      int64 // 0 if not flagged
 }
 
-// Client queries the AUR RPC.
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
 }
 
-// NewClient returns a client for the AUR at baseURL.
 func NewClient(baseURL string) *Client {
 	return &Client{BaseURL: baseURL, HTTP: &http.Client{Timeout: 30 * time.Second}}
 }

@@ -4,6 +4,7 @@ package prompt
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +14,46 @@ import (
 	"github.com/grunclepug/aurlock/internal/check"
 )
 
-// Review is what one prompt shows and can open.
+// Input reads answers from the terminal. A read in progress gives way to
+// a cancelled context, so Ctrl-C at a prompt stops at once. It reads only
+// when asked, never ahead: pacman reads its own answers from stdin too.
+type Input struct {
+	r       *bufio.Reader
+	pending chan result
+}
+
+type result struct {
+	line string
+	err  error
+}
+
+func NewInput(r io.Reader) *Input {
+	return &Input{r: bufio.NewReader(r)}
+}
+
+// ReadLine returns the next line, trimmed. A last line without a newline
+// counts; after it comes io.EOF.
+func (in *Input) ReadLine(ctx context.Context) (string, error) {
+	if in.pending == nil {
+		ch := make(chan result, 1)
+		in.pending = ch
+		go func() {
+			s, err := in.r.ReadString('\n')
+			if err != nil && s != "" && errors.Is(err, io.EOF) {
+				err = nil
+			}
+			ch <- result{strings.TrimSpace(s), err}
+		}()
+	}
+	select {
+	case res := <-in.pending:
+		in.pending = nil
+		return res.line, res.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
 type Review struct {
 	PkgBase    string
 	OldVersion string // "" on a first install
@@ -22,19 +62,19 @@ type Review struct {
 	Notes      []string
 	OfferGrant bool // offer [g]rant network
 
-	View func() error           // the PKGBUILD and install scripts in a pager
-	Diff func() error           // git diff since the approval; nil on a first install
-	AI   func() (string, error) // the AI second opinion; nil hides [c]
+	View func() error           // PKGBUILD and install scripts in a pager
+	Diff func() error           // nil on a first install
+	AI   func() (string, error) // nil hides [c]
 }
 
-// Decision is the owner's answer.
 type Decision struct {
 	Approve bool
-	Online  bool // approve with network during the build
+	Online  bool // build with network
 }
 
-// Ask shows a review and reads answers until it has a decision. EOF is no.
-func Ask(in *bufio.Reader, out io.Writer, r Review) (Decision, error) {
+// Ask shows a review and reads answers until it has a decision. Anything
+// unclear, and EOF, is no.
+func Ask(ctx context.Context, in *Input, out io.Writer, r Review) (Decision, error) {
 	var d Decision
 	showHeader := true
 	for {
@@ -47,7 +87,7 @@ func Ask(in *bufio.Reader, out io.Writer, r Review) (Decision, error) {
 			showHeader = false
 		}
 		fmt.Fprint(out, question(r, len(flags) > 0, d.Online))
-		ans, err := readLine(in)
+		ans, err := in.ReadLine(ctx)
 		if err != nil {
 			fmt.Fprintln(out)
 			if errors.Is(err, io.EOF) {
@@ -75,7 +115,6 @@ func Ask(in *bufio.Reader, out io.Writer, r Review) (Decision, error) {
 		case ans == "c" && r.AI != nil:
 			fmt.Fprintln(out, "asking for a second opinion...")
 			answer, err := r.AI()
-			// Back to the prompt with the flags above the answer.
 			header(out, r, flags)
 			if err != nil {
 				fmt.Fprintf(out, "second opinion failed: %v\n", err)
@@ -116,7 +155,6 @@ func header(out io.Writer, r Review, flags []check.Flag) {
 	}
 }
 
-// FormatFlags lists flags by group, one per line.
 func FormatFlags(flags []check.Flag) string {
 	var b strings.Builder
 	for _, g := range check.Groups {
@@ -153,12 +191,12 @@ func question(r Review, flagged, online bool) string {
 
 // AskGrant asks whether an approved package may build with network after
 // an offline build failed. Granting is a flag, so it takes the name typed.
-func AskGrant(in *bufio.Reader, out io.Writer, pkgbase, version string, view func() error) (bool, error) {
+func AskGrant(ctx context.Context, in *Input, out io.Writer, pkgbase, version string, view func() error) (bool, error) {
 	fmt.Fprintf(out, "%s %s   its last offline build failed with what looks like a network error\n", pkgbase, version)
 	fmt.Fprint(out, FormatFlags([]check.Flag{check.NetworkFlag()}))
 	for {
 		fmt.Fprintf(out, "type %q to grant network for this commit, or [v]iew / [n]o: ", pkgbase)
-		ans, err := readLine(in)
+		ans, err := in.ReadLine(ctx)
 		if err != nil {
 			fmt.Fprintln(out)
 			if errors.Is(err, io.EOF) {
@@ -177,14 +215,6 @@ func AskGrant(in *bufio.Reader, out io.Writer, pkgbase, version string, view fun
 			return false, nil
 		}
 	}
-}
-
-func readLine(in *bufio.Reader) (string, error) {
-	s, err := in.ReadString('\n')
-	if err != nil && (s == "" || !errors.Is(err, io.EOF)) {
-		return "", err
-	}
-	return strings.TrimSpace(s), nil
 }
 
 func indent(s string) string {

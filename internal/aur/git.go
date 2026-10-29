@@ -1,13 +1,10 @@
 package aur
 
 import (
-	"archive/tar"
 	"bufio"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,8 +12,8 @@ import (
 	"strings"
 )
 
-// Repo is a local mirror of one package base's AUR git repository. It's
-// bare, so fetching it never checks anything out or runs hooks.
+// Repo is a bare mirror of one package base's AUR repository: fetching it
+// never checks anything out or runs hooks.
 type Repo struct {
 	Dir string
 }
@@ -26,8 +23,7 @@ func RepoURL(baseURL, pkgbase string) string {
 	return baseURL + "/" + pkgbase + ".git"
 }
 
-// Sync clones the repository at url into dir, or fetches it if dir
-// already holds a clone.
+// Sync clones url into dir, or fetches it if dir already holds a clone.
 func Sync(ctx context.Context, dir, url string) (*Repo, error) {
 	r := &Repo{Dir: dir}
 	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err == nil {
@@ -52,8 +48,7 @@ func Sync(ctx context.Context, dir, url string) (*Repo, error) {
 	return r, nil
 }
 
-// RemoteHead returns the commit at HEAD of a remote repository without
-// fetching it.
+// RemoteHead returns the commit at a remote's HEAD without fetching.
 func RemoteHead(ctx context.Context, url string) (string, error) {
 	out, err := runGit(ctx, "", "ls-remote", url, "HEAD")
 	if err != nil {
@@ -90,13 +85,12 @@ func (r *Repo) git(ctx context.Context, args ...string) ([]byte, error) {
 	return runGit(ctx, r.Dir, args...)
 }
 
-// Cmd returns a git command in the repository, for the caller to attach
-// to the terminal.
-func (r *Repo) Cmd(ctx context.Context, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, "git", append([]string{"-C", r.Dir}, args...)...)
+// Cmd returns a git command for the caller to attach to the terminal. It
+// has no context: an interactive pager must not be killed mid-screen.
+func (r *Repo) Cmd(args ...string) *exec.Cmd {
+	return exec.Command("git", append([]string{"-C", r.Dir}, args...)...)
 }
 
-// Head returns the commit at HEAD.
 func (r *Repo) Head(ctx context.Context) (string, error) {
 	out, err := r.git(ctx, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
 	if err != nil {
@@ -105,38 +99,48 @@ func (r *Repo) Head(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// HasCommit reports whether the repository contains a commit.
 func (r *Repo) HasCommit(ctx context.Context, commit string) bool {
 	_, err := r.git(ctx, "cat-file", "-e", commit+"^{commit}")
 	return err == nil
 }
 
-// IsAncestor reports whether a is an ancestor of (or equal to) b.
+// IsAncestor reports whether a is an ancestor of, or equal to, b.
 func (r *Repo) IsAncestor(ctx context.Context, a, b string) bool {
 	_, err := r.git(ctx, "merge-base", "--is-ancestor", a, b)
 	return err == nil
 }
 
-// File returns a file's content at a commit. ok is false if the file
-// doesn't exist there.
-func (r *Repo) File(ctx context.Context, commit, path string) (data []byte, ok bool, err error) {
-	if _, err := r.git(ctx, "cat-file", "-e", commit+":"+path); err != nil {
-		return nil, false, nil
-	}
-	out, err := r.git(ctx, "cat-file", "blob", commit+":"+path)
-	if err != nil {
-		return nil, false, err
-	}
-	return out, true, nil
+// Blob returns the content of a blob by its object id, unconverted.
+func (r *Repo) Blob(ctx context.Context, id string) ([]byte, error) {
+	return r.git(ctx, "cat-file", "blob", id)
 }
 
-// Files lists every file at a commit.
-func (r *Repo) Files(ctx context.Context, commit string) ([]string, error) {
-	out, err := r.git(ctx, "ls-tree", "-r", "-z", "--name-only", commit)
+// Entry is one file in a tree.
+type Entry struct {
+	Path string
+	Mode string // git mode: 100644, 100755 or 120000 for a symlink
+	ID   string // blob id
+}
+
+// Tree lists every file at a commit. Submodules are left out.
+func (r *Repo) Tree(ctx context.Context, commit string) ([]Entry, error) {
+	out, err := r.git(ctx, "ls-tree", "-r", "-z", commit)
 	if err != nil {
 		return nil, err
 	}
-	return splitZ(out), nil
+	var entries []Entry
+	for _, rec := range splitZ(out) {
+		// <mode> SP <type> SP <id> TAB <path>
+		meta, path, ok := strings.Cut(rec, "\t")
+		f := strings.Fields(meta)
+		if !ok || len(f) != 3 {
+			return nil, fmt.Errorf("ls-tree: bad entry %q", rec)
+		}
+		if f[1] == "blob" {
+			entries = append(entries, Entry{Path: path, Mode: f[0], ID: f[2]})
+		}
+	}
+	return entries, nil
 }
 
 // Changed lists the files that differ between two commits.
@@ -158,8 +162,8 @@ func splitZ(b []byte) []string {
 	return out
 }
 
-// Authors lists the distinct "name <email>" authors of the commits a git
-// log revision range selects, such as "abc..HEAD" or "abc".
+// Authors lists the distinct "name <email>" authors of the commits a
+// revision range selects, such as "abc..HEAD" or "abc".
 func (r *Repo) Authors(ctx context.Context, rev string) ([]string, error) {
 	out, err := r.git(ctx, "log", "--format=%an <%ae>", rev, "--")
 	if err != nil {
@@ -183,14 +187,13 @@ type Line struct {
 	Text string
 }
 
-// Diff is what changed in one file between two commits: added lines
-// numbered in the new file, removed lines numbered in the old one.
+// Diff is the change to one file: added lines numbered in the new file,
+// removed lines in the old one.
 type Diff struct {
 	Added   []Line
 	Removed []Line
 }
 
-// FileDiff returns the line changes to one file between two commits.
 func (r *Repo) FileDiff(ctx context.Context, from, to, path string) (Diff, error) {
 	out, err := r.git(ctx, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "-U0", from, to, "--", path)
 	if err != nil {
@@ -246,84 +249,11 @@ func hunkStart(s string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("bad hunk range %q", s)
 	}
-	// Only a zero-length range starts at 0, and it has no lines to number.
+	// Only an empty range starts at 0, and it has no lines to number.
 	return max(n, 1), nil
 }
 
-// DiffText returns the unified diff between two commits.
 func (r *Repo) DiffText(ctx context.Context, from, to string) (string, error) {
 	out, err := r.git(ctx, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", from, to)
 	return string(out), err
-}
-
-// Export writes a clean copy of the tree at a commit into dst, which must
-// not exist. It's a copy, not a checkout: nothing in dst points back at
-// the repository.
-func (r *Repo) Export(ctx context.Context, commit, dst string) error {
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return err
-	}
-	cmd := exec.CommandContext(ctx, "git", "-C", r.Dir, "archive", "--format=tar", commit)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	xerr := untar(out, dst)
-	io.Copy(io.Discard, out)
-	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("git archive: %s", strings.TrimSpace(stderr.String()))
-	}
-	return xerr
-}
-
-func untar(r io.Reader, dst string) error {
-	tr := tar.NewReader(r)
-	for {
-		h, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		name := filepath.Clean(h.Name)
-		if filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") {
-			return fmt.Errorf("archive: unsafe path %q", h.Name)
-		}
-		path := filepath.Join(dst, name)
-		switch h.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(path, 0o755); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			mode := os.FileMode(0o644)
-			if h.Mode&0o111 != 0 {
-				mode = 0o755
-			}
-			f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
-			if err != nil {
-				return err
-			}
-			if _, err := io.Copy(f, tr); err != nil {
-				f.Close()
-				return err
-			}
-			if err := f.Close(); err != nil {
-				return err
-			}
-		case tar.TypeSymlink:
-			if err := os.Symlink(h.Linkname, path); err != nil {
-				return err
-			}
-		case tar.TypeXGlobalHeader:
-		default:
-			return fmt.Errorf("archive: unsupported entry %q", h.Name)
-		}
-	}
 }

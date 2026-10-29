@@ -19,7 +19,6 @@ import (
 	"strings"
 )
 
-// Table is a record file in memory.
 type Table struct {
 	header string
 	fields int
@@ -53,8 +52,7 @@ func load(path, header string, n int, valid func([]string) error) (*Table, error
 	return t, sc.Err()
 }
 
-// record splits a line into fields, or returns nil for a blank line or a
-// comment.
+// record returns a line's fields, or nil for a blank line or a comment.
 func record(line string) []string {
 	if i := strings.IndexByte(line, '#'); i >= 0 {
 		line = line[:i]
@@ -66,7 +64,6 @@ func record(line string) []string {
 	return f
 }
 
-// Records returns every record, in file order.
 func (t *Table) Records() [][]string {
 	var out [][]string
 	for _, l := range t.lines {
@@ -77,7 +74,6 @@ func (t *Table) Records() [][]string {
 	return out
 }
 
-// Get returns the record with this key.
 func (t *Table) Get(key string) ([]string, bool) {
 	for _, l := range t.lines {
 		if f := record(l); f != nil && f[0] == key {
@@ -102,7 +98,6 @@ func (t *Table) Set(f []string) {
 	t.lines = append(t.lines, line)
 }
 
-// Delete removes the record with this key and reports whether it existed.
 func (t *Table) Delete(key string) bool {
 	for i, l := range t.lines {
 		if r := record(l); r != nil && r[0] == key {
@@ -182,7 +177,6 @@ var (
 	nameRe   = regexp.MustCompile(`^[a-z0-9@_+][a-z0-9@._+-]*$`)
 )
 
-// ValidName reports whether s is a valid AUR package or package base name.
 func ValidName(s string) bool {
 	return len(s) <= 255 && nameRe.MatchString(s)
 }

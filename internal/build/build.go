@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -26,7 +28,6 @@ type Dirs struct {
 	GnuPG   string // aurlock's public keyring, "" if not needed
 }
 
-// Config is one build.
 type Config struct {
 	Dirs
 	Online bool // the build step keeps network access
@@ -95,7 +96,8 @@ func Args(cfg Config, network bool) []string {
 	return append(a, "--")
 }
 
-// Fetch downloads and verifies the sources, with network.
+// Fetch downloads and verifies the sources, with network. makepkg runs
+// the PKGBUILD here, so only call it for an approved commit.
 func Fetch(ctx context.Context, cfg Config) error {
 	args := append(Args(cfg, true), "makepkg", "--verifysource", "--noconfirm")
 	_, err := run(ctx, cfg, args)
@@ -174,6 +176,50 @@ func Reset(d Dirs) error {
 	}
 	if d.GnuPG != "" {
 		return os.MkdirAll(d.GnuPG, 0o700)
+	}
+	return nil
+}
+
+// WriteTree writes files into dir byte for byte, so the build sees exactly
+// what was reviewed. Symlinks come last, so nothing is written through one.
+func WriteTree(dir string, files map[string][]byte, modes map[string]string) error {
+	var links []string
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		if !filepath.IsLocal(name) {
+			return fmt.Errorf("unsafe path %q", name)
+		}
+		if modes[name] == "120000" {
+			links = append(links, name)
+			continue
+		}
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		perm := os.FileMode(0o644)
+		if modes[name] == "100755" {
+			perm = 0o755
+		}
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+		if err != nil {
+			return err
+		}
+		_, err = f.Write(files[name])
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return err
+		}
+	}
+	for _, name := range links {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := os.Symlink(string(files[name]), path); err != nil {
+			return err
+		}
 	}
 	return nil
 }

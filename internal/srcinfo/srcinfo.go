@@ -18,13 +18,11 @@ type SRCINFO struct {
 	Packages []Package
 }
 
-// Package is one pkgname section.
 type Package struct {
 	Name   string
 	Fields map[string][]string
 }
 
-// Parse reads a .SRCINFO.
 func Parse(r io.Reader) (*SRCINFO, error) {
 	s := &SRCINFO{Base: map[string][]string{}}
 	cur := s.Base
@@ -106,7 +104,6 @@ func (s *SRCINFO) Version() string {
 	return v
 }
 
-// Names lists the package names.
 func (s *SRCINFO) Names() []string {
 	var names []string
 	for _, p := range s.Packages {
@@ -115,7 +112,6 @@ func (s *SRCINFO) Names() []string {
 	return names
 }
 
-// Package returns the package section with this name.
 func (s *SRCINFO) Package(name string) (Package, bool) {
 	for _, p := range s.Packages {
 		if p.Name == name {
@@ -164,10 +160,8 @@ func (s *SRCINFO) Install() []string {
 	return out
 }
 
-// SumKeys are the checksum arrays makepkg knows.
 var SumKeys = []string{"cksums", "md5sums", "sha1sums", "sha224sums", "sha256sums", "sha384sums", "sha512sums", "b2sums"}
 
-// Source is one entry of a source array with its checksums.
 type Source struct {
 	Array string // "source" or "source_<arch>"
 	Index int

@@ -13,18 +13,15 @@ import (
 	"github.com/grunclepug/aurlock/internal/check"
 )
 
-// DefaultAI runs Claude Code with no tools, no MCP servers, no hooks or
-// other customizations, and no saved session: it can only read the prompt
-// and answer.
+// DefaultAI can only read the prompt and answer: no tools, MCP servers,
+// hooks or other customizations, and no saved session.
 var DefaultAI = []string{"claude", "-p", "--tools", "", "--safe-mode", "--strict-mcp-config", "--no-session-persistence"}
 
 // Marker separates aurlock's instructions from the package's content.
 const Marker = "=== UNTRUSTED PACKAGE CONTENT ==="
 
-// maxContent caps how much package content goes into the prompt.
 const maxContent = 200 << 10
 
-// AIInput is what the second opinion gets to see.
 type AIInput struct {
 	PkgName        string
 	PkgBase        string
@@ -37,7 +34,6 @@ type AIInput struct {
 	Content        string // the diff, or the full PKGBUILD and install scripts
 }
 
-// AIPrompt builds the prompt for the second opinion.
 func AIPrompt(in AIInput, now time.Time) string {
 	var b strings.Builder
 	b.WriteString("You are giving a second opinion on an Arch User Repository (AUR) package before its owner decides whether to build and install it. You advise; the owner decides. AUR packages have been taken over to ship malware: a new update quietly changes what the PKGBUILD downloads or runs.\n\n")
@@ -121,12 +117,13 @@ func Advise(ctx context.Context, custom, prompt string) (string, error) {
 	return stdout.String(), nil
 }
 
-// Page shows text in $PAGER (default less), attached to the terminal.
-func Page(ctx context.Context, pager, text string, stdout, stderr io.Writer) error {
+// Page shows text in $PAGER, default less. Like Repo.Cmd, it has no
+// context to be killed by.
+func Page(pager, text string, stdout, stderr io.Writer) error {
 	if pager == "" {
 		pager = "less"
 	}
-	cmd := exec.CommandContext(ctx, "sh", "-c", pager)
+	cmd := exec.Command("sh", "-c", pager)
 	cmd.Stdin = strings.NewReader(text)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	return cmd.Run()

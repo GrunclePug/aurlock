@@ -17,7 +17,6 @@ import (
 	"testing"
 )
 
-// AUR is a fake AUR.
 type AUR struct {
 	t    testing.TB
 	Dir  string
@@ -32,7 +31,6 @@ func Isolate(t testing.TB) {
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 }
 
-// New starts a fake AUR.
 func New(t testing.TB) *AUR {
 	Isolate(t)
 	a := &AUR{t: t, Dir: t.TempDir(), info: map[string]map[string]any{}}
@@ -66,14 +64,12 @@ func (a *AUR) serveInfo(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"version": 5, "type": "multiinfo", "resultcount": len(results), "results": results})
 }
 
-// Package is the RPC data of one package.
 type Package struct {
 	Name, Base, Version string
 	Maintainer          string // "" for orphaned
 	FirstSubmitted      int64
 }
 
-// SetInfo sets what the RPC says about a package.
 func (a *AUR) SetInfo(p Package) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

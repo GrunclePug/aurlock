@@ -4,7 +4,6 @@
 package app
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -12,11 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/grunclepug/aurlock/internal/aur"
+	"github.com/grunclepug/aurlock/internal/prompt"
 	"github.com/grunclepug/aurlock/internal/store"
 )
 
@@ -33,11 +32,11 @@ type Env struct {
 	Version string
 }
 
-// Exit codes.
 const (
-	exitOK    = 0
-	exitFail  = 1
-	exitError = 2
+	exitOK          = 0
+	exitFail        = 1
+	exitError       = 2
+	exitInterrupted = 130
 )
 
 const usage = `usage: aurlock <command> [args]
@@ -58,10 +57,9 @@ pacman-style calls, for arcus:
   aurlock -D --asdeps <pkg>...           (runs sudo pacman)
 `
 
-// app is one run.
 type app struct {
 	Env
-	in    *bufio.Reader
+	in    *prompt.Input
 	paths paths
 	rpc   *aur.Client
 	arch  string
@@ -70,7 +68,7 @@ type app struct {
 type paths struct {
 	approved  string
 	installed string
-	hints     string // packages whose offline build looked like it needed network
+	hints     string // packages whose offline build looked like a network failure
 	cache     string
 }
 
@@ -94,7 +92,6 @@ func newPaths(getenv func(string) string) (paths, error) {
 	}, nil
 }
 
-// Run runs aurlock and returns its exit code.
 func Run(ctx context.Context, env Env) int {
 	if env.Getenv == nil {
 		env.Getenv = os.Getenv
@@ -105,7 +102,7 @@ func Run(ctx context.Context, env Env) int {
 	if env.AURURL == "" {
 		env.AURURL = aur.DefaultURL
 	}
-	a := &app{Env: env, in: bufio.NewReader(env.Stdin), rpc: aur.NewClient(env.AURURL), arch: archName()}
+	a := &app{Env: env, in: prompt.NewInput(env.Stdin), rpc: aur.NewClient(env.AURURL), arch: archName()}
 	args := env.Args
 	if len(args) == 0 {
 		fmt.Fprint(env.Stderr, usage)
@@ -124,7 +121,15 @@ func Run(ctx context.Context, env Env) int {
 		return a.fail(err)
 	}
 	a.warnConflicts()
+	code := a.dispatch(ctx, args)
+	if ctx.Err() != nil {
+		fmt.Fprintln(env.Stderr, "\naurlock: interrupted")
+		return exitInterrupted
+	}
+	return code
+}
 
+func (a *app) dispatch(ctx context.Context, args []string) int {
 	switch args[0] {
 	case "install":
 		return a.install(ctx, options{}, args[1:])
@@ -149,7 +154,7 @@ func Run(ctx context.Context, env Env) int {
 	if strings.HasPrefix(args[0], "-") {
 		return a.pacmanStyle(ctx, args)
 	}
-	fmt.Fprintf(env.Stderr, "aurlock: unknown command %q\n%s", args[0], usage)
+	fmt.Fprintf(a.Stderr, "aurlock: unknown command %q\n%s", args[0], usage)
 	return exitError
 }
 
@@ -162,8 +167,8 @@ func (a *app) warnf(format string, args ...any) {
 	fmt.Fprintf(a.Stderr, "aurlock: "+format+"\n", args...)
 }
 
-// warnConflicts warns about Syncthing conflict copies of the approvals
-// file. They're never merged automatically.
+// warnConflicts warns about Syncthing conflict copies of the approvals,
+// which are never merged automatically.
 func (a *app) warnConflicts() {
 	files, err := store.ConflictFiles(a.paths.approved)
 	if err != nil {
@@ -223,7 +228,7 @@ func (a *app) pacmanStyle(ctx context.Context, args []string) int {
 		}
 		return a.install(ctx, opts, pkgs)
 	case strings.HasPrefix(op, "-R"), strings.HasPrefix(op, "-D"):
-		if err := sudoPacman(ctx, a.Env, args...); err != nil {
+		if err := a.sudoPacman(ctx, args...); err != nil {
 			return a.fail(err)
 		}
 		if strings.HasPrefix(op, "-R") {
@@ -399,14 +404,4 @@ func (a *app) outdated(ctx context.Context) int {
 		return exitFail
 	}
 	return exitOK
-}
-
-// sortedKeys returns a map's keys in order.
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
 }

@@ -1,9 +1,9 @@
 package prompt
 
 import (
-	"bufio"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +22,7 @@ func ask(t *testing.T, input string, r Review) (Decision, string) {
 		r.View = func() error { return nil }
 	}
 	var out strings.Builder
-	d, err := Ask(bufio.NewReader(strings.NewReader(input)), &out, r)
+	d, err := Ask(context.Background(), NewInput(strings.NewReader(input)), &out, r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestAI(t *testing.T) {
 func TestAskGrant(t *testing.T) {
 	for in, want := range map[string]bool{"foo\n": true, "y\n": false, "": false, "v\nfoo\n": true} {
 		var out strings.Builder
-		got, err := AskGrant(bufio.NewReader(strings.NewReader(in)), &out, "foo", "1-1", func() error { return nil })
+		got, err := AskGrant(context.Background(), NewInput(strings.NewReader(in)), &out, "foo", "1-1", func() error { return nil })
 		if err != nil || got != want {
 			t.Errorf("%q: %v %v", in, got, err)
 		}
@@ -200,5 +200,26 @@ func TestAdvise(t *testing.T) {
 	t.Setenv("PATH", dir)
 	if _, err := Advise(context.Background(), "", "x"); err == nil || !strings.Contains(err.Error(), "claude not found") {
 		t.Errorf("missing claude: %v", err)
+	}
+}
+
+func TestReadLineCancel(t *testing.T) {
+	r, w := io.Pipe()
+	defer w.Close()
+	in := NewInput(r)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := in.ReadLine(ctx); err != context.Canceled {
+		t.Fatalf("err = %v", err)
+	}
+	// The read that was in progress isn't lost.
+	go func() {
+		w.Write([]byte("foo\nbar"))
+		w.Close()
+	}()
+	for _, want := range []string{"foo", "bar"} {
+		if got, err := in.ReadLine(context.Background()); err != nil || got != want {
+			t.Errorf("got %q %v, want %q", got, err, want)
+		}
 	}
 }

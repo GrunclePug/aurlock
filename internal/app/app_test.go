@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -53,9 +54,14 @@ func (h *harness) read(name string) string {
 // run runs aurlock and returns its exit code and output.
 func (h *harness) run(stdin string, tty bool, args ...string) (int, string, string) {
 	h.t.Helper()
+	return h.runCtx(context.Background(), strings.NewReader(stdin), tty, args...)
+}
+
+func (h *harness) runCtx(ctx context.Context, stdin io.Reader, tty bool, args ...string) (int, string, string) {
+	h.t.Helper()
 	var stdout, stderr strings.Builder
-	code := Run(context.Background(), Env{
-		Args: args, Stdin: strings.NewReader(stdin), Stdout: &stdout, Stderr: &stderr,
+	code := Run(ctx, Env{
+		Args: args, Stdin: stdin, Stdout: &stdout, Stderr: &stderr,
 		TTY: tty, Getenv: os.Getenv, AURURL: h.aur.URL, Now: func() time.Time { return now }, Version: "test",
 	})
 	return code, stdout.String(), stderr.String()
@@ -599,5 +605,46 @@ func TestConflictWarning(t *testing.T) {
 	_, _, stderr := h.run("", false, "list")
 	if !strings.Contains(stderr, "warning: approvals conflict") {
 		t.Errorf("no warning: %q", stderr)
+	}
+}
+
+func TestInterruptAtPrompt(t *testing.T) {
+	h := newHarness(t)
+	h.publish("foo", "1.0-1", old)
+	r, w := io.Pipe()
+	defer w.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		// Ctrl-C while the prompt waits for an answer.
+		for !strings.Contains(h.read("log"), "pacman -T") {
+			time.Sleep(10 * time.Millisecond)
+		}
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	code, _, stderr := h.runCtx(ctx, r, true, "install", "foo")
+	if code != 130 || stderr != "\naurlock: interrupted\n" {
+		t.Errorf("exit %d %q", code, stderr)
+	}
+	if _, ok := h.approval("foo"); ok {
+		t.Error("approved")
+	}
+}
+
+func TestBuildsReviewedBytes(t *testing.T) {
+	h := newHarness(t)
+	files := pkgFiles("foo", "1.0-1")
+	// git archive would expand this from the commit message.
+	files["PKGBUILD"] += "# $Format:%B$\n"
+	files[".gitattributes"] = "PKGBUILD export-subst\n"
+	head := h.aur.Commit("foo", author, files)
+	h.aur.SetInfo(testaur.Package{Name: "foo", Base: "foo", Version: "1.0-1", Maintainer: "someone", FirstSubmitted: now.Add(-old).Unix()})
+	h.approve("foo", head, "1.0-1", false)
+	if code, _, stderr := h.run("", false, "install", "foo"); code != 0 {
+		t.Fatalf("exit %d %s", code, stderr)
+	}
+	built, _ := os.ReadFile(filepath.Join(h.home, ".cache", "aurlock", "build", "foo", "PKGBUILD"))
+	if string(built) != files["PKGBUILD"] {
+		t.Errorf("built PKGBUILD differs from the reviewed one:\n%s", built)
 	}
 }

@@ -30,7 +30,6 @@ const (
 // Groups is the display order.
 var Groups = []Group{Who, Where, What}
 
-// Flag is one red flag.
 type Flag struct {
 	Group Group
 	Text  string
@@ -44,13 +43,14 @@ func (f Flag) String() string {
 	return f.Text + " (" + f.At + ")"
 }
 
-// Snapshot is the package repository at one commit.
+// Snapshot is the package repository at one commit: what gets reviewed,
+// and later exactly what gets built.
 type Snapshot struct {
 	SRCINFO *srcinfo.SRCINFO
-	Files   map[string][]byte // every file in the repository
+	Files   map[string][]byte
+	Modes   map[string]string // git modes of Files
 }
 
-// Input is everything the checks look at.
 type Input struct {
 	Arch string
 	Now  time.Time
@@ -72,13 +72,11 @@ func (in *Input) Update() bool {
 	return in.Old != nil
 }
 
-// Result is the flags and some plain information.
 type Result struct {
 	Flags []Flag
 	Notes []string
 }
 
-// Run computes the flags.
 func Run(in Input) Result {
 	var r Result
 	pb := scan(string(in.New.Files["PKGBUILD"]))
@@ -286,7 +284,8 @@ func urlsOutsideSRCINFO(in *Input, r *Result, pb []line) {
 	}
 }
 
-// sourceKeys are the PKGBUILD variables that decide what makepkg fetches.
+// sourceKey reports whether a PKGBUILD variable decides what makepkg
+// fetches.
 func sourceKey(name string) bool {
 	base, _, _ := strings.Cut(name, "_")
 	switch {

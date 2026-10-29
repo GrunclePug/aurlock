@@ -8,7 +8,6 @@ import (
 	"strings"
 )
 
-// pacmanInstalled maps installed package names to their versions.
 func pacmanInstalled(ctx context.Context) (map[string]string, error) {
 	out, err := exec.CommandContext(ctx, "pacman", "-Q").Output()
 	if err != nil {
@@ -40,24 +39,28 @@ func pacmanMissing(ctx context.Context, deps []string) ([]string, error) {
 	return nil, fmt.Errorf("pacman -T: %w", err)
 }
 
-// pacmanResolvable reports whether the sync repositories can satisfy a
+// pacmanResolvable reports whether the sync repositories satisfy a
 // dependency, by name or through provides.
 func pacmanResolvable(ctx context.Context, dep string) bool {
 	cmd := exec.CommandContext(ctx, "pacman", "-Sp", "--noconfirm", "--print-format", "%n", "--", dep)
 	return cmd.Run() == nil
 }
 
-// sudoPacman runs pacman as root, attached to the terminal.
-func sudoPacman(ctx context.Context, env Env, args ...string) error {
-	cmd := exec.CommandContext(ctx, "sudo", append([]string{"pacman"}, args...)...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = env.Stdin, env.Stdout, env.Stderr
+// sudoPacman runs pacman as root, attached to the terminal. A cancelled
+// context stops it from starting but never kills it: pacman gets Ctrl-C
+// from the terminal itself and stops safely.
+func (a *app) sudoPacman(ctx context.Context, args ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	cmd := exec.Command("sudo", append([]string{"pacman"}, args...)...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = a.Stdin, a.Stdout, a.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("sudo pacman %s: %w", strings.Join(args, " "), err)
 	}
 	return nil
 }
 
-// depName strips the version constraint from a dependency.
 func depName(dep string) string {
 	if i := strings.IndexAny(dep, "<>="); i >= 0 {
 		return dep[:i]

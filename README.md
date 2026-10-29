@@ -78,7 +78,9 @@ type "solidcraft-bin" to approve, or [c]laude / [v]iew / [d]iff / [n]o:
 | `g` | Grant the build network access. This is a flag, so it then takes the name typed. Offered when the package had a grant before or its last offline build failed on the network. |
 | `n`, Enter, anything else | Skip the package. |
 
-A package that's already approved at the AUR's current commit installs without a prompt, for example after another machine approved it. Without a terminal, aurlock fails instead of prompting.
+A package that's already approved at the AUR's current commit installs without a prompt, for example after another machine approved it. Without a terminal, aurlock fails instead of prompting. Ctrl-C stops at the next safe point and never kills pacman mid-transaction; a second Ctrl-C quits at once.
+
+aurlock upgrades only AUR packages and builds them against what's installed, so upgrade the system first: `sudo pacman -Syu && aurlock upgrade`.
 
 ### Configuration
 
@@ -131,10 +133,11 @@ Top-level assignments count as data, so `depends=(curl)` isn't a flag, but a com
 
 Every build runs in bubblewrap, and only after its commit is approved:
 
-1. Dependencies are installed first with `sudo pacman -S --needed --asdeps`, since makepkg can't use sudo inside the sandbox. An AUR package that depends on another AUR package that isn't installed is refused: install that one first.
-2. **Sources, with network**: `makepkg --verifysource` downloads and verifies the sources. If the package lists `validpgpkeys`, aurlock first fetches those exact fingerprints from keyserver.ubuntu.com into its own keyring. Your `~/.gnupg` never enters the sandbox.
-3. **Build, offline**: `makepkg --holdver` runs with no network unless the approval grants it.
-4. The built packages you asked for are installed with `sudo pacman -U`.
+1. The build directory gets the reviewed files byte for byte, not a git checkout, so the repository's `.gitattributes` can't change what gets built.
+2. Dependencies are installed first with `sudo pacman -S --needed --asdeps`, since makepkg can't use sudo inside the sandbox. An AUR package that depends on another AUR package that isn't installed is refused: install that one first.
+3. **Sources, with network**: `makepkg --verifysource` downloads and verifies the sources. If the package lists `validpgpkeys`, aurlock first fetches those exact fingerprints from keyserver.ubuntu.com into its own keyring. Your `~/.gnupg` never enters the sandbox.
+4. **Build, offline**: `makepkg --holdver` runs with no network unless the approval grants it.
+5. The built packages you asked for are installed with `sudo pacman -U`.
 
 The sandbox mounts `/usr`, `/etc` and the pacman database read-only, with a fresh `/dev`, `/proc` and `/tmp`. It can write only the package's build, source and output directories. `$HOME` isn't mounted, so a build can't read SSH keys, browser profiles or tokens. The environment is cleared apart from a few variables, and nested user namespaces are disabled.
 

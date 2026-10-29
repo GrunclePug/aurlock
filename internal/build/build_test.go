@@ -126,3 +126,26 @@ func TestImportKeys(t *testing.T) {
 		t.Error("short key id accepted")
 	}
 }
+
+func TestWriteTree(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string][]byte{"PKGBUILD": []byte("x\n"), "sub/run.sh": []byte("#!/bin/sh\n"), "link": []byte("PKGBUILD")}
+	modes := map[string]string{"PKGBUILD": "100644", "sub/run.sh": "100755", "link": "120000"}
+	if err := WriteTree(dir, files, modes); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(filepath.Join(dir, "sub", "run.sh")); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Errorf("run.sh: %v %v", fi, err)
+	}
+	if target, err := os.Readlink(filepath.Join(dir, "link")); err != nil || target != "PKGBUILD" {
+		t.Errorf("link: %q %v", target, err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "PKGBUILD")); string(data) != "x\n" {
+		t.Errorf("PKGBUILD = %q", data)
+	}
+	for _, bad := range []string{"../escape", "/etc/passwd"} {
+		if err := WriteTree(t.TempDir(), map[string][]byte{bad: nil}, nil); err == nil {
+			t.Errorf("wrote %q", bad)
+		}
+	}
+}

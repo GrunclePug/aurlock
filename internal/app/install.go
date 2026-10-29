@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -159,6 +160,9 @@ func (a *app) process(ctx context.Context, opts options, targets []*target, upgr
 	var ready []*target
 	for _, t := range targets {
 		ok, err := a.review(ctx, opts, t, upgrade)
+		if ctx.Err() != nil {
+			return exitFail
+		}
 		if err != nil {
 			a.warnf("%s: %v", t.label(), err)
 			failed = true
@@ -175,7 +179,7 @@ func (a *app) process(ctx context.Context, opts options, targets []*target, upgr
 		if ctx.Err() != nil {
 			return exitFail
 		}
-		if err := a.build(ctx, opts, t); err != nil {
+		if err := a.build(ctx, opts, t); err != nil && ctx.Err() == nil {
 			a.warnf("%s: %v", t.label(), err)
 			failed = true
 		}
@@ -234,7 +238,7 @@ func (a *app) review(ctx context.Context, opts options, t *target, upgrade bool)
 		t.online = ap.Online
 		fmt.Fprintf(a.Stdout, ":: %s %s is approved\n", t.base, version)
 		if !ap.Online && hint == t.head && a.TTY && !opts.noconfirm {
-			grant, err := prompt.AskGrant(a.in, a.Stdout, t.base, version, a.viewer(ctx, t))
+			grant, err := prompt.AskGrant(ctx, a.in, a.Stdout, t.base, version, a.viewer(ctx, t))
 			if err != nil {
 				return false, err
 			}
@@ -291,7 +295,7 @@ func (a *app) review(ctx context.Context, opts options, t *target, upgrade bool)
 	if update {
 		r.OldVersion = ap.Version
 		r.Diff = func() error {
-			cmd := t.repo.Cmd(ctx, "diff", ap.Commit+".."+t.head)
+			cmd := t.repo.Cmd("diff", ap.Commit+".."+t.head)
 			cmd.Stdin, cmd.Stdout, cmd.Stderr = a.Stdin, a.Stdout, a.Stderr
 			return cmd.Run()
 		}
@@ -307,7 +311,7 @@ func (a *app) review(ctx context.Context, opts options, t *target, upgrade bool)
 		return prompt.Advise(ctx, a.Getenv("AURLOCK_AI"), prompt.AIPrompt(ai, a.Now()))
 	}
 
-	d, err := prompt.Ask(a.in, a.Stdout, r)
+	d, err := prompt.Ask(ctx, a.in, a.Stdout, r)
 	if err != nil || !d.Approve {
 		return false, err
 	}
@@ -398,19 +402,16 @@ func splitAuthor(s string) (name, email string) {
 // snapshot reads a package repository at a commit, without running any
 // of it.
 func snapshot(ctx context.Context, repo *aur.Repo, commit string) (*check.Snapshot, error) {
-	files, err := repo.Files(ctx, commit)
+	entries, err := repo.Tree(ctx, commit)
 	if err != nil {
 		return nil, err
 	}
-	s := &check.Snapshot{Files: map[string][]byte{}}
-	for _, f := range files {
-		data, ok, err := repo.File(ctx, commit, f)
-		if err != nil {
+	s := &check.Snapshot{Files: map[string][]byte{}, Modes: map[string]string{}}
+	for _, e := range entries {
+		if s.Files[e.Path], err = repo.Blob(ctx, e.ID); err != nil {
 			return nil, err
 		}
-		if ok {
-			s.Files[f] = data
-		}
+		s.Modes[e.Path] = e.Mode
 	}
 	data, ok := s.Files[".SRCINFO"]
 	if !ok {
@@ -447,7 +448,7 @@ func reviewText(s *check.Snapshot) string {
 
 func (a *app) viewer(ctx context.Context, t *target) func() error {
 	return func() error {
-		return prompt.Page(ctx, a.Getenv("PAGER"), reviewText(t.snap), a.Stdout, a.Stderr)
+		return prompt.Page(a.Getenv("PAGER"), reviewText(t.snap), a.Stdout, a.Stderr)
 	}
 }
 
@@ -462,7 +463,6 @@ func (a *app) saveApproval(ap store.Approval) error {
 	return approvals.Save()
 }
 
-// ownProvides is what the packages of a base provide themselves.
 func ownProvides(s *srcinfo.SRCINFO) map[string]bool {
 	own := map[string]bool{}
 	for _, p := range s.Packages {
@@ -526,7 +526,6 @@ func (a *app) writeHint(base, commit string) error {
 	return os.WriteFile(filepath.Join(a.paths.hints, base), []byte(commit+"\n"), 0o644)
 }
 
-// build builds an approved target in the sandbox and installs it.
 func (a *app) build(ctx context.Context, opts options, t *target) (err error) {
 	info := t.snap.SRCINFO
 	version := info.Version()
@@ -543,7 +542,7 @@ func (a *app) build(ctx context.Context, opts options, t *target) (err error) {
 	if err := build.Reset(dirs); err != nil {
 		return err
 	}
-	if err := t.repo.Export(ctx, t.head, dirs.Work); err != nil {
+	if err := build.WriteTree(dirs.Work, t.snap.Files, t.snap.Modes); err != nil {
 		return err
 	}
 	if len(keys) > 0 {
@@ -563,7 +562,7 @@ func (a *app) build(ctx context.Context, opts options, t *target) (err error) {
 	}
 	if len(missing) > 0 {
 		args := append([]string{"-S", "--needed", "--asdeps"}, pacmanFlags...)
-		if err := sudoPacman(ctx, a.Env, append(append(args, "--"), missing...)...); err != nil {
+		if err := a.sudoPacman(ctx, append(append(args, "--"), missing...)...); err != nil {
 			return err
 		}
 	}
@@ -576,7 +575,7 @@ func (a *app) build(ctx context.Context, opts options, t *target) (err error) {
 			return err
 		}
 		args := append([]string{"-S", "--needed", "--asdeps"}, pacmanFlags...)
-		if err := sudoPacman(ctx, a.Env, append(append(args, "--"), missing...)...); err != nil {
+		if err := a.sudoPacman(ctx, append(append(args, "--"), missing...)...); err != nil {
 			return err
 		}
 		after, err := pacmanInstalled(ctx)
@@ -584,7 +583,7 @@ func (a *app) build(ctx context.Context, opts options, t *target) (err error) {
 			return err
 		}
 		var added []string
-		for _, name := range sortedKeys(after) {
+		for _, name := range slices.Sorted(maps.Keys(after)) {
 			if _, ok := before[name]; !ok {
 				added = append(added, name)
 			}
@@ -592,7 +591,7 @@ func (a *app) build(ctx context.Context, opts options, t *target) (err error) {
 		if opts.removemake && len(added) > 0 {
 			defer func() {
 				args := append([]string{"-Rns"}, pacmanFlags...)
-				if rerr := sudoPacman(context.WithoutCancel(ctx), a.Env, append(append(args, "--"), added...)...); rerr != nil && err == nil {
+				if rerr := a.sudoPacman(ctx, append(append(args, "--"), added...)...); rerr != nil && err == nil {
 					err = rerr
 				}
 			}()
@@ -626,7 +625,7 @@ func (a *app) build(ctx context.Context, opts options, t *target) (err error) {
 		files = append(files, f)
 	}
 	args := append([]string{"-U"}, pacmanFlags...)
-	if err := sudoPacman(ctx, a.Env, append(append(args, "--"), files...)...); err != nil {
+	if err := a.sudoPacman(ctx, append(append(args, "--"), files...)...); err != nil {
 		return err
 	}
 

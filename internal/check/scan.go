@@ -5,10 +5,8 @@ import (
 	"strings"
 )
 
-// line is one line of a shell file (a PKGBUILD or an install script) with
-// a rough idea of where it sits. This is a heuristic reader for naming
-// lines in flags, not a shell parser: it tracks quotes, top-level arrays
-// and function bodies, which is enough for the files makepkg reads.
+// line is one line of a shell file with a rough idea of where it sits.
+// scan is a heuristic for naming lines in flags, not a shell parser.
 type line struct {
 	Num   int
 	Text  string
@@ -179,7 +177,6 @@ var commands = func() []command {
 	return cs
 }()
 
-// matches returns the commands a line runs.
 func (l line) matches() []string {
 	var out []string
 	for _, c := range commands {
