@@ -82,6 +82,33 @@ A package that's already approved at the AUR's current commit installs without a
 
 aurlock upgrades only AUR packages and builds them against what's installed, so upgrade the system first: `sudo pacman -Syu && aurlock upgrade`.
 
+### Cheatsheet
+
+Switching from another AUR helper. aurlock only upgrades packages it installed itself, so adopt the rest once:
+
+```sh
+aurlock list                                                   # foreign packages aurlock doesn't track yet
+aurlock install <pkg>...                                       # adopt some: review, rebuild, reinstall
+aurlock install $(aurlock list | awk '/AUR has/ {print $1}')   # or every untracked AUR package at once
+sudo pacman -Rns yay                                           # then retire the old helper
+```
+
+Adopting reviews each package at the AUR's current commit and rebuilds it, because nothing says which commit the installed build came from. All the prompts come first, then the builds. The last `install` line also picks up the old helper if it came from the AUR: answer `n` at its prompt. aurlock never adopts packages by itself, since a locally built package can share an AUR package's name.
+
+Day to day:
+
+| Task | Command |
+|------|---------|
+| Update everything | `sudo pacman -Syu && aurlock upgrade` |
+| See what's waiting | `aurlock outdated` |
+| Install a new AUR package | `aurlock install <pkg>` |
+| Remove one | `aurlock -Rns <pkg>` (runs `sudo pacman` and drops it from the install log) |
+| Inspect before approving | `v`, `d` or `c` at the prompt |
+| Review a package from scratch | `aurlock forget <pkg> && aurlock install <pkg>` |
+| Let a build use the network | After a failed offline build, `aurlock install <pkg>` and type its name at the grant prompt |
+| Install what another machine approved | `aurlock upgrade`, or `aurlock install <pkg>` if it's new here: no prompt |
+| Fix a Syncthing conflict | Merge `approved.sync-conflict-*` into `approved` by hand, then delete it |
+
 ### Configuration
 
 | Variable | Flag | Default | Description |
@@ -95,10 +122,6 @@ aurlock upgrades only AUR packages and builds them against what's installed, so 
 | | `--noconfirm` | off | With `-S`: install approved packages without prompts, and fail any package that needs review. It never approves anything. |
 | | `--needed` | off | With `-S`: skip packages installed at the approved commit. |
 | | `--removemake` | off | With `-S`: remove the make dependencies installed for the build. |
-
-### Moving from another AUR helper
-
-aurlock only upgrades packages it installed. `aurlock list` shows the foreign packages it doesn't track. Adopt the AUR ones with `aurlock install <pkg>...`: that reviews the package at the AUR's current commit and rebuilds it, since nothing says which commit the installed build came from. aurlock never adopts packages automatically, because a locally built package can share an AUR package's name.
 
 ## Files
 
