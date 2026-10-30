@@ -90,6 +90,11 @@ func Args(cfg Config, network bool) []string {
 	set("BUILDDIR", cfg.Work)
 	set("SRCDEST", cfg.SrcDest)
 	set("PKGDEST", cfg.PkgDest)
+	// Only the user's own ID is mapped, so a real chown to root fails with
+	// EINVAL, which fakeroot passes on (it ignores only EPERM): cp -a or
+	// chown root:root in package() would fail. fakeroot records the owner
+	// either way, and the record is what goes into the package.
+	set("FAKEROOTDONTTRYCHOWN", "1")
 	if cfg.GnuPG != "" {
 		set("GNUPGHOME", cfg.GnuPG)
 	}

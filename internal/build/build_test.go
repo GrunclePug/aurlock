@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,6 +35,7 @@ func TestArgs(t *testing.T) {
 		"--chdir " + cfg.Work, "--clearenv",
 		"--setenv HOME /tmp/home", "--setenv LANG de_DE.UTF-8", "--setenv MAKEFLAGS -j8",
 		"--setenv BUILDDIR " + cfg.Work, "--setenv SRCDEST " + cfg.SrcDest, "--setenv PKGDEST " + cfg.PkgDest,
+		"--setenv FAKEROOTDONTTRYCHOWN 1",
 	} {
 		if !strings.Contains(offline, want) {
 			t.Errorf("args lack %q", want)
@@ -147,5 +149,32 @@ func TestWriteTree(t *testing.T) {
 		if err := WriteTree(t.TempDir(), map[string][]byte{bad: nil}, nil); err == nil {
 			t.Errorf("wrote %q", bad)
 		}
+	}
+}
+
+// In the real sandbox, package() may give files to root under fakeroot,
+// with chown, install -o or cp -a, although only the user is mapped.
+func TestSandboxChownUnderFakeroot(t *testing.T) {
+	for _, tool := range []string{"bwrap", "fakeroot"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not installed", tool)
+		}
+	}
+	cfg := testConfig(t)
+	for _, d := range []string{cfg.Work, cfg.SrcDest, cfg.PkgDest} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := exec.Command("bwrap", append(Args(cfg, false), "true")...).Run(); err != nil {
+		t.Skipf("bwrap can't create a sandbox here: %v", err)
+	}
+	script := "mkdir -p src/d && echo x > src/d/f && chown root:root src/d/f && install -o root -g root -m644 src/d/f g && cp -a src out && stat -c %u:%g out/d out/d/f g"
+	out, err := exec.Command("bwrap", append(Args(cfg, false), "fakeroot", "--", "sh", "-c", script)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if got := strings.Fields(string(out)); strings.Join(got, " ") != "0:0 0:0 0:0" {
+		t.Errorf("owners under fakeroot = %q, want root for all", out)
 	}
 }

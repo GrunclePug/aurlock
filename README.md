@@ -170,7 +170,7 @@ The sandbox mounts `/usr`, `/etc` and the pacman database read-only, with a fres
 
 If an offline build fails with what looks like a network error, aurlock says so. The next `aurlock install` of that package offers to grant network for that commit.
 
-Known limitation: bubblewrap maps only your own user into the sandbox. A PKGBUILD that changes ownership to another user (`chown root:root` in `package()`, or `install -o`) fails to build.
+bubblewrap maps only your own user into the sandbox, so fakeroot only records ownership changes in `package()` (`chown root:root`, `install -o`, `cp -a`) and doesn't try them for real. The package gets the recorded owners, as it would outside the sandbox.
 
 ## Second opinion
 
