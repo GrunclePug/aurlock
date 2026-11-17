@@ -191,11 +191,14 @@ func question(r Review, flagged, online bool) string {
 
 // AskGrant asks whether an approved package may build with network after
 // an offline build failed. Granting is a flag, so it takes the name typed.
-func AskGrant(ctx context.Context, in *Input, out io.Writer, pkgbase, version string, view func() error) (bool, error) {
-	fmt.Fprintf(out, "%s %s   its last offline build failed with what looks like a network error\n", pkgbase, version)
-	fmt.Fprint(out, FormatFlags([]check.Flag{check.NetworkFlag()}))
+func AskGrant(ctx context.Context, in *Input, out io.Writer, pkgbase, version string, view func() error, ai func() (string, error)) (bool, error) {
+	header := func() {
+		fmt.Fprintf(out, "%s %s   its last offline build failed with what looks like a network error\n", pkgbase, version)
+		fmt.Fprint(out, FormatFlags([]check.Flag{check.NetworkFlag()}))
+	}
+	header()
 	for {
-		fmt.Fprintf(out, "type %q to grant network for this commit, or [v]iew / [n]o: ", pkgbase)
+		fmt.Fprintf(out, "type %q to grant network for this commit, or [c]laude / [v]iew / [n]o: ", pkgbase)
 		ans, err := in.ReadLine(ctx)
 		if err != nil {
 			fmt.Fprintln(out)
@@ -210,6 +213,15 @@ func AskGrant(ctx context.Context, in *Input, out io.Writer, pkgbase, version st
 		case "v":
 			if err := view(); err != nil {
 				fmt.Fprintf(out, "view: %v\n", err)
+			}
+		case "c":
+			fmt.Fprintln(out, "asking for a second opinion...")
+			answer, err := ai()
+			header()
+			if err != nil {
+				fmt.Fprintf(out, "second opinion failed: %v\n", err)
+			} else {
+				fmt.Fprintf(out, "\nsecond opinion (advice only):\n%s\n\n", indent(strings.TrimSpace(answer)))
 			}
 		default:
 			return false, nil

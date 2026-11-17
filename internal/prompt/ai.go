@@ -37,15 +37,22 @@ type AIInput struct {
 	FirstSubmitted time.Time
 	Flags          []check.Flag
 	Content        string // the diff, or the full PKGBUILD and install scripts
+	// Grant: the commit is approved, and the question is whether its build
+	// may use the network after an offline build failed. Content starts
+	// with that build's last output.
+	Grant bool
 }
 
 func AIPrompt(in AIInput, now time.Time) string {
 	var b strings.Builder
 	b.WriteString("You are giving a second opinion on an Arch User Repository (AUR) package before its owner decides whether to build and install it. You advise; the owner decides. AUR packages have been taken over to ship malware: a new update quietly changes what the PKGBUILD downloads or runs.\n\n")
 	fmt.Fprintf(&b, "Package: %s (package base %s)\n", in.PkgName, in.PkgBase)
-	if in.OldVersion == "" {
+	switch {
+	case in.Grant:
+		fmt.Fprintf(&b, "Change: none. %s is already approved, but its build failed offline with what looks like a network error. The owner is deciding whether to let the build use the network; \"approve\" below means grant it. The failed build's last output and the whole package follow\n", in.NewVersion)
+	case in.OldVersion == "":
 		fmt.Fprintf(&b, "Change: first install of %s; the whole package follows\n", in.NewVersion)
-	} else {
+	default:
 		fmt.Fprintf(&b, "Change: update from the approved %s to %s; the diff follows\n", in.OldVersion, in.NewVersion)
 	}
 	m := in.Maintainer

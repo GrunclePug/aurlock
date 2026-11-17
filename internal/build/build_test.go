@@ -154,7 +154,8 @@ func TestBuild(t *testing.T) {
 		"  [6] Could not resolve hostname (Could not resolve host: index.crates.io)\n",
 	} {
 		os.WriteFile(filepath.Join(state, "build-fails"), []byte(out), 0o644)
-		if err := Build(ctx, cfg); !errors.Is(err, ErrNeedsNetwork) {
+		err := Build(ctx, cfg)
+		if nn, ok := errors.AsType[*NeedsNetwork](err); !ok || !errors.Is(err, ErrNeedsNetwork) || nn.Log != out {
 			t.Errorf("offline network failure %q: %v", out, err)
 		}
 	}
@@ -176,6 +177,25 @@ func TestBuild(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `aurlock: RUSTUP_HOME "rustup" isn't an absolute path to a directory: not mounted into the build`) {
 		t.Errorf("no warning for a bad RUSTUP_HOME: %q", stderr.String())
+	}
+}
+
+func TestLastLines(t *testing.T) {
+	for _, tc := range []struct {
+		out      string
+		n, limit int
+		want     string
+	}{
+		{"a\nb\nc\n", 2, 100, "b\nc\n"},
+		{"a\nb\nc", 5, 100, "a\nb\nc\n"},
+		{"aaaa\nbbbb\ncc\n", 3, 6, "cc\n"},       // a cut line is dropped
+		{"aaaa\nbbbb\ncc\n", 3, 8, "bbbb\ncc\n"}, // exactly the limit, final newline included
+		{"aaaa\nbbbb\ncc\n", 3, 7, "cc\n"},
+		{"x\xffy\n", 1, 100, "x?y\n"},
+	} {
+		if got := lastLines([]byte(tc.out), tc.n, tc.limit); got != tc.want {
+			t.Errorf("lastLines(%q, %d, %d) = %q, want %q", tc.out, tc.n, tc.limit, got, tc.want)
+		}
 	}
 }
 

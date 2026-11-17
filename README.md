@@ -131,7 +131,7 @@ Day to day:
 | `~/.config/aurlock/approved` | Approvals, one line per package base. | Yes, if you sync it. |
 | `~/.config/aurlock/local` | Packages built locally rather than from the AUR, one name per line, `#` comments allowed. aurlock only reads it. | If you like. |
 | `~/.local/state/aurlock/installed` | Which approved commit each installed package came from. | No |
-| `~/.local/state/aurlock/needs-network/` | Packages whose last offline build looked like a network failure. | No |
+| `~/.local/state/aurlock/needs-network/` | Packages whose last offline build looked like a network failure: the commit, then the end of the build's output. | No |
 | `~/.cache/aurlock/repos/<pkgbase>.git` | Bare mirror of the package's AUR git repository. | No |
 | `~/.cache/aurlock/build/`, `src/`, `pkg/` | Build directories, downloaded sources and built packages, one directory per package base. | No |
 | `~/.cache/aurlock/keyring/` | Public keys for packages with signed sources. Never mounted into a build. | No |
@@ -173,13 +173,13 @@ The sandbox mounts `/usr`, `/etc` and the pacman database read-only, with a fres
 
 The one exception to `$HOME` is rustup's toolchain directory (`RUSTUP_HOME`), so Rust packages build when rustup provides `rust`. It's mounted read-only, and it's readable in both steps, `settings.toml` included. rustup can't install anything during a build, so install the toolchains and components a package needs beforehand, and set a default (`rustup default stable`) or `RUSTUP_TOOLCHAIN`: per-directory overrides don't apply to the build directory. Toolchains linked or named by a path outside the rustup directory aren't visible. Cargo's own home stays empty inside the sandbox.
 
-If an offline build fails with what looks like a network error, aurlock says so. The next `aurlock install` of that package offers to grant network for that commit.
+If an offline build fails with what looks like a network error, aurlock says so and keeps the last 60 lines of its output. The next `aurlock install` of that package offers to grant network for that commit. At that prompt, `[v]` shows the kept output before the package's files, so you can see what the build tried to reach, and `[c]` asks for a second opinion on both.
 
 bubblewrap maps only your own user into the sandbox, so fakeroot only records ownership changes in `package()` (`chown root:root`, `install -o`, `cp -a`) and doesn't try them for real. The package gets the recorded owners, as it would outside the sandbox.
 
 ## Second opinion
 
-`[c]` runs `claude -p --tools "" --safe-mode --strict-mcp-config --no-session-persistence` in a fresh empty directory, with the prompt on stdin. Claude Code gets no tools, no MCP servers, hooks or other customizations, and keeps no session. The prompt has the package's name, versions, maintainer, age and flags, plus what `[v]` shows (and on an update, the diff since the approval). It marks the package content as untrusted data, says there are no tools to fetch anything else, and asks for why each flag fired, a malicious likelihood and a recommendation in about ten lines. An answer normally takes seconds; after two minutes aurlock gives up and returns to the prompt. The answer is advice: approving still takes `y` or the typed name.
+`[c]` runs `claude -p --tools "" --safe-mode --strict-mcp-config --no-session-persistence` in a fresh empty directory, with the prompt on stdin. Claude Code gets no tools, no MCP servers, hooks or other customizations, and keeps no session. The prompt has the package's name, versions, maintainer, age and flags, plus what `[v]` shows (and on an update, the diff since the approval; at the grant prompt, the failed build's output). It marks the package content as untrusted data, says there are no tools to fetch anything else, and asks for why each flag fired, a malicious likelihood and a recommendation in about ten lines. An answer normally takes seconds; after two minutes aurlock gives up and returns to the prompt. The answer is advice: approving still takes `y` or the typed name.
 
 Set `AURLOCK_AI` to use another command. It must not have tools either.
 

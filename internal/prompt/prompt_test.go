@@ -146,11 +146,15 @@ func TestAI(t *testing.T) {
 }
 
 func TestAskGrant(t *testing.T) {
-	for in, want := range map[string]bool{"foo\n": true, "y\n": false, "": false, "v\nfoo\n": true} {
+	ai := func() (string, error) { return "Recommendation: approve", nil }
+	for in, want := range map[string]bool{"foo\n": true, "y\n": false, "": false, "v\nfoo\n": true, "c\nfoo\n": true, "c\ny\n": false} {
 		var out strings.Builder
-		got, err := AskGrant(context.Background(), NewInput(strings.NewReader(in)), &out, "foo", "1-1", func() error { return nil })
+		got, err := AskGrant(context.Background(), NewInput(strings.NewReader(in)), &out, "foo", "1-1", func() error { return nil }, ai)
 		if err != nil || got != want {
 			t.Errorf("%q: %v %v", in, got, err)
+		}
+		if strings.HasPrefix(in, "c") && !strings.Contains(out.String(), "second opinion (advice only):\n  Recommendation: approve\n") {
+			t.Errorf("%q: no second opinion:\n%s", in, out.String())
 		}
 	}
 }
@@ -174,6 +178,10 @@ func TestAIPrompt(t *testing.T) {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt lacks %q", want)
 		}
+	}
+	grant := AIPrompt(AIInput{PkgName: "foo", PkgBase: "foo", NewVersion: "2-1", Grant: true}, now)
+	if !strings.Contains(grant, "Change: none. 2-1 is already approved") || strings.Contains(grant, "first install") {
+		t.Errorf("grant prompt:\n%s", grant)
 	}
 	// The package content comes only after the marker.
 	_, after, ok := strings.Cut(p, Marker+"\n")

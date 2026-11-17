@@ -504,9 +504,18 @@ func TestNetworkGrant(t *testing.T) {
 	os.Remove(filepath.Join(h.state, "build-fails"))
 	os.Remove(filepath.Join(h.state, "log"))
 
-	code, stdout, stderr := h.run("foo\n", true, "install", "foo")
-	if code != 0 || !strings.Contains(stdout, `type "foo" to grant network for this commit`) {
+	// [c] gets the failed build's output with the package.
+	code, stdout, stderr := h.run("c\nfoo\n", true, "install", "foo")
+	if code != 0 || !strings.Contains(stdout, `type "foo" to grant network for this commit, or [c]laude / [v]iew / [n]o`) ||
+		!strings.Contains(stdout, "second opinion (advice only):") {
 		t.Fatalf("exit %d\n%s\n%s", code, stdout, stderr)
+	}
+	p := h.read("claude-prompt")
+	for _, want := range []string{"Change: none. 1.0-1 is already approved", "! what:  the build gets network access",
+		prompt.Marker + "\n==> last output of the failed offline build <==\ncurl: (6) Could not resolve host: registry.npmjs.org\n", "==> PKGBUILD <=="} {
+		if !strings.Contains(p, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, p)
+		}
 	}
 	if ap, _ := h.approval("foo"); !ap.Online || ap.Commit != head {
 		t.Errorf("approval = %+v", ap)

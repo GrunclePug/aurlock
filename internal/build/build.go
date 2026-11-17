@@ -154,9 +154,36 @@ func Fetch(ctx context.Context, cfg Config) error {
 	return nil
 }
 
-// ErrNeedsNetwork wraps a failed offline build whose output looks like a
-// network error.
+// ErrNeedsNetwork matches a *NeedsNetwork with errors.Is.
 var ErrNeedsNetwork = errors.New("the build may need network access")
+
+// NeedsNetwork is a failed offline build whose output looks like a network
+// error. Log is the end of that output, written by the build: untrusted.
+type NeedsNetwork struct{ Log string }
+
+func (e *NeedsNetwork) Error() string        { return ErrNeedsNetwork.Error() }
+func (e *NeedsNetwork) Is(target error) bool { return target == ErrNeedsNetwork }
+
+// logLines and logBytes bound NeedsNetwork.Log.
+const (
+	logLines = 60
+	logBytes = 8 << 10
+)
+
+// lastLines returns the last n lines of out, at most limit bytes of them.
+func lastLines(out []byte, n, limit int) string {
+	lines := strings.Split(strings.TrimRight(strings.ToValidUTF8(string(out), "?"), "\n"), "\n")
+	s := strings.Join(lines[max(0, len(lines)-n):], "\n")
+	if cut := len(s) - limit + 1; cut > 0 { // the final newline counts too
+		// Drop the line the cut lands in, unless it starts there.
+		if i := strings.IndexByte(s[cut-1:], '\n'); i >= 0 {
+			s = s[cut+i:]
+		} else {
+			s = ""
+		}
+	}
+	return s + "\n"
+}
 
 // Build builds the packages into PkgDest, offline unless cfg.Online.
 func Build(ctx context.Context, cfg Config) error {
@@ -166,7 +193,7 @@ func Build(ctx context.Context, cfg Config) error {
 	out, err := run(ctx, cfg, args)
 	if err != nil {
 		if !cfg.Online && networkError.Match(out) {
-			return fmt.Errorf("build: %w: %w", err, ErrNeedsNetwork)
+			return fmt.Errorf("build: %w: %w", err, &NeedsNetwork{Log: lastLines(out, logLines, logBytes)})
 		}
 		return fmt.Errorf("build: %w", err)
 	}

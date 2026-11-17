@@ -238,13 +238,25 @@ func (a *app) review(ctx context.Context, opts options, t *target, upgrade bool)
 	}
 	ap, approved := approvals.Get(t.base)
 	version := t.snap.SRCINFO.Version()
-	hint := a.readHint(t.base)
+	hint, hintLog := a.readHint(t.base)
 
 	if approved && ap.Commit == t.head {
 		t.online = ap.Online
 		fmt.Fprintf(a.Stdout, ":: %s %s is approved\n", t.base, version)
 		if !ap.Online && hint == t.head && a.TTY && !opts.noconfirm {
-			grant, err := prompt.AskGrant(ctx, a.in, a.Stdout, t.base, version, a.viewer(ctx, t))
+			text := grantText(t.snap, hintLog)
+			view := func() error { return prompt.Page(a.Getenv("PAGER"), text, a.Stdout, a.Stderr) }
+			ai := prompt.AIInput{
+				PkgName: t.label(), PkgBase: t.base, NewVersion: version, Maintainer: t.rpc.Maintainer,
+				Flags: []check.Flag{check.NetworkFlag()}, Content: text, Grant: true,
+			}
+			if t.rpc.FirstSubmitted > 0 {
+				ai.FirstSubmitted = time.Unix(t.rpc.FirstSubmitted, 0)
+			}
+			advise := func() (string, error) {
+				return prompt.Advise(ctx, a.Getenv("AURLOCK_AI"), prompt.AIPrompt(ai, a.Now()))
+			}
+			grant, err := prompt.AskGrant(ctx, a.in, a.Stdout, t.base, version, view, advise)
 			if err != nil {
 				return false, err
 			}
@@ -470,6 +482,15 @@ func reviewText(s *check.Snapshot) string {
 	return b.String()
 }
 
+// grantText is what the grant prompt's [v] and [c] show: the failed
+// build's last output, then the package.
+func grantText(s *check.Snapshot, log string) string {
+	if log == "" {
+		return reviewText(s)
+	}
+	return "==> last output of the failed offline build <==\n" + log + "\n" + reviewText(s)
+}
+
 func (a *app) viewer(ctx context.Context, t *target) func() error {
 	return func() error {
 		return prompt.Page(a.Getenv("PAGER"), reviewText(t.snap), a.Stdout, a.Stderr)
@@ -535,19 +556,22 @@ func (a *app) checkDeps(ctx context.Context, s *srcinfo.SRCINFO) error {
 	return nil
 }
 
-func (a *app) readHint(base string) string {
+// readHint returns the commit whose offline build failed on the network,
+// and the end of that build's output ("" in hints from before 0.5.0).
+func (a *app) readHint(base string) (commit, log string) {
 	data, err := os.ReadFile(filepath.Join(a.paths.hints, base))
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	return strings.TrimSpace(string(data))
+	commit, log, _ = strings.Cut(string(data), "\n")
+	return strings.TrimSpace(commit), log
 }
 
-func (a *app) writeHint(base, commit string) error {
+func (a *app) writeHint(base, commit, log string) error {
 	if err := os.MkdirAll(a.paths.hints, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(a.paths.hints, base), []byte(commit+"\n"), 0o644)
+	return os.WriteFile(filepath.Join(a.paths.hints, base), []byte(commit+"\n"+log), 0o644)
 }
 
 func (a *app) build(ctx context.Context, opts options, t *target) (err error) {
@@ -637,8 +661,8 @@ func (a *app) build(ctx context.Context, opts options, t *target) (err error) {
 		return err
 	}
 	if err := build.Build(ctx, cfg); err != nil {
-		if errors.Is(err, build.ErrNeedsNetwork) {
-			if herr := a.writeHint(t.base, t.head); herr != nil {
+		if nn, ok := errors.AsType[*build.NeedsNetwork](err); ok {
+			if herr := a.writeHint(t.base, t.head, nn.Log); herr != nil {
 				a.warnf("%v", herr)
 			}
 			return fmt.Errorf("%w\n  if it needs network to build, run aurlock install %s to grant it", err, t.label())
