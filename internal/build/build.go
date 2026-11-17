@@ -1,7 +1,8 @@
 // Package build runs makepkg on an approved package inside bubblewrap: a
 // download step with network, then an offline build. The system is
-// read-only, $HOME isn't mounted, and only the package's own build,
-// source and output directories are writable.
+// read-only, $HOME isn't mounted apart from rustup's toolchains
+// (read-only), and only the package's own build, source and output
+// directories are writable.
 package build
 
 import (
@@ -39,8 +40,33 @@ type Config struct {
 	Stderr io.Writer
 }
 
-// home is $HOME inside the sandbox: an empty directory on its tmpfs.
+// home is $HOME inside the sandbox: a directory on its tmpfs, empty but
+// for the rustup home mounted at rustupDest.
 const home = "/tmp/home"
+
+const rustupDest = home + "/.rustup"
+
+// rustupHome returns the rustup home to mount into the sandbox, "" if
+// there's none. rustup's /usr/bin proxies (rustc, cargo) need it to find a
+// toolchain. An explicit RUSTUP_HOME that isn't an absolute directory is an
+// error; it never falls back to ~/.rustup.
+func rustupHome(getenv func(string) string) (string, error) {
+	if dir := getenv("RUSTUP_HOME"); dir != "" {
+		if fi, err := os.Stat(dir); !filepath.IsAbs(dir) || err != nil || !fi.IsDir() {
+			return "", fmt.Errorf("RUSTUP_HOME %q isn't an absolute path to a directory", dir)
+		}
+		return dir, nil
+	}
+	h := getenv("HOME")
+	if !filepath.IsAbs(h) {
+		return "", nil
+	}
+	dir := filepath.Join(h, ".rustup")
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return "", nil
+	}
+	return dir, nil
+}
 
 // Args returns the bwrap arguments for a makepkg run, up to and including
 // the "--" before the command.
@@ -76,6 +102,12 @@ func Args(cfg Config, network bool) []string {
 			a = append(a, "--bind", d, d)
 		}
 	}
+	// Read-only, and with auto-install off: a build can't add toolchains or
+	// change rustup's settings, and a missing toolchain fails at once.
+	rustup, _ := rustupHome(cfg.Getenv)
+	if rustup != "" {
+		a = append(a, "--ro-bind", rustup, rustupDest)
+	}
 	a = append(a, "--chdir", cfg.Work, "--clearenv")
 	set := func(k, v string) { a = append(a, "--setenv", k, v) }
 	set("PATH", "/usr/local/sbin:/usr/local/bin:/usr/bin")
@@ -85,7 +117,7 @@ func Args(cfg Config, network bool) []string {
 		lang = "C.UTF-8"
 	}
 	set("LANG", lang)
-	for _, k := range []string{"TERM", "MAKEFLAGS"} {
+	for _, k := range []string{"TERM", "MAKEFLAGS", "RUSTUP_TOOLCHAIN"} {
 		if v := cfg.Getenv(k); v != "" {
 			set(k, v)
 		}
@@ -98,6 +130,10 @@ func Args(cfg Config, network bool) []string {
 	// chown root:root in package() would fail. fakeroot records the owner
 	// either way, and the record is what goes into the package.
 	set("FAKEROOTDONTTRYCHOWN", "1")
+	if rustup != "" {
+		set("RUSTUP_HOME", rustupDest)
+		set("RUSTUP_AUTO_INSTALL", "0")
+	}
 	if cfg.GnuPG != "" {
 		set("GNUPGHOME", cfg.GnuPG)
 	}
@@ -107,6 +143,9 @@ func Args(cfg Config, network bool) []string {
 // Fetch downloads and verifies the sources, with network. makepkg runs
 // the PKGBUILD here, so only call it for an approved commit.
 func Fetch(ctx context.Context, cfg Config) error {
+	if _, err := rustupHome(cfg.Getenv); err != nil {
+		fmt.Fprintf(cfg.Stderr, "aurlock: %v: not mounted into the build\n", err)
+	}
 	args := append(Args(cfg, true), "makepkg", "--verifysource", "--noconfirm")
 	_, err := run(ctx, cfg, args)
 	if err != nil {

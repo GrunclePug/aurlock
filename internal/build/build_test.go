@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -58,6 +59,71 @@ func TestArgs(t *testing.T) {
 	}
 }
 
+func TestArgsRustup(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	other := filepath.Join(dir, "rust up")
+	file := filepath.Join(dir, "file")
+	for _, d := range []string{filepath.Join(home, ".rustup"), other} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(file, nil, 0o644)
+	for _, tc := range []struct {
+		name  string
+		env   map[string]string
+		mount string // source mounted at /tmp/home/.rustup, "" for none
+		err   bool
+	}{
+		{"default", map[string]string{"HOME": home}, filepath.Join(home, ".rustup"), false},
+		{"explicit", map[string]string{"HOME": home, "RUSTUP_HOME": other}, other, false},
+		{"relative", map[string]string{"HOME": home, "RUSTUP_HOME": "rustup"}, "", true},
+		{"file", map[string]string{"HOME": home, "RUSTUP_HOME": file}, "", true},
+		{"missing explicit", map[string]string{"HOME": home, "RUSTUP_HOME": filepath.Join(dir, "nope")}, "", true},
+		{"no rustup", map[string]string{"HOME": dir}, "", false},
+		{"relative HOME", map[string]string{"HOME": "home"}, "", false},
+		{"no HOME", map[string]string{}, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			getenv := func(k string) string { return tc.env[k] }
+			if _, err := rustupHome(getenv); (err != nil) != tc.err {
+				t.Errorf("rustupHome error = %v, want error %v", err, tc.err)
+			}
+			cfg := testConfig(t)
+			cfg.Getenv = getenv
+			a := Args(cfg, false)
+			bind := slices.Index(a, "/tmp/home/.rustup")
+			env := slices.Index(a, "RUSTUP_HOME")
+			if tc.mount == "" {
+				if bind >= 0 || env >= 0 || slices.Contains(a, "RUSTUP_AUTO_INSTALL") {
+					t.Errorf("rustup mounted: %q", a)
+				}
+				return
+			}
+			if bind < 2 || a[bind-2] != "--ro-bind" || a[bind-1] != tc.mount {
+				t.Fatalf("no --ro-bind %s /tmp/home/.rustup in %q", tc.mount, a)
+			}
+			if tmpfs := slices.Index(a, "--tmpfs"); tmpfs < 0 || bind < tmpfs {
+				t.Error("rustup bind before --tmpfs /tmp")
+			}
+			clear := slices.Index(a, "--clearenv")
+			if env < clear || a[env-1] != "--setenv" || a[env+1] != "/tmp/home/.rustup" {
+				t.Errorf("RUSTUP_HOME not set after --clearenv: %q", a)
+			}
+			if i := slices.Index(a, "RUSTUP_AUTO_INSTALL"); i < clear || a[i+1] != "0" {
+				t.Errorf("RUSTUP_AUTO_INSTALL not 0: %q", a)
+			}
+		})
+	}
+
+	cfg := testConfig(t)
+	cfg.Getenv = func(k string) string { return map[string]string{"RUSTUP_TOOLCHAIN": "stable"}[k] }
+	if a := strings.Join(Args(cfg, false), " "); !strings.Contains(a, "--setenv RUSTUP_TOOLCHAIN stable") {
+		t.Error("RUSTUP_TOOLCHAIN not passed through")
+	}
+}
+
 func TestBuild(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("PATH", testaur.Fakes(t, state)+":"+os.Getenv("PATH"))
@@ -83,9 +149,14 @@ func TestBuild(t *testing.T) {
 		t.Errorf("makepkg runs:\n%s", makepkg)
 	}
 
-	os.WriteFile(filepath.Join(state, "build-fails"), []byte("npm ERR! getaddrinfo EAI_AGAIN registry.npmjs.org\n"), 0o644)
-	if err := Build(ctx, cfg); !errors.Is(err, ErrNeedsNetwork) {
-		t.Errorf("offline network failure: %v", err)
+	for _, out := range []string{
+		"npm ERR! getaddrinfo EAI_AGAIN registry.npmjs.org\n",
+		"  [6] Could not resolve hostname (Could not resolve host: index.crates.io)\n",
+	} {
+		os.WriteFile(filepath.Join(state, "build-fails"), []byte(out), 0o644)
+		if err := Build(ctx, cfg); !errors.Is(err, ErrNeedsNetwork) {
+			t.Errorf("offline network failure %q: %v", out, err)
+		}
 	}
 	cfg.Online = true
 	if err := Build(ctx, cfg); err == nil || errors.Is(err, ErrNeedsNetwork) {
@@ -95,6 +166,16 @@ func TestBuild(t *testing.T) {
 	os.WriteFile(filepath.Join(state, "build-fails"), []byte("error: undefined reference to foo\n"), 0o644)
 	if err := Build(ctx, cfg); err == nil || errors.Is(err, ErrNeedsNetwork) {
 		t.Errorf("plain failure: %v", err)
+	}
+
+	var stderr strings.Builder
+	cfg.Stderr = &stderr
+	cfg.Getenv = func(k string) string { return map[string]string{"RUSTUP_HOME": "rustup"}[k] }
+	if err := Fetch(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), `aurlock: RUSTUP_HOME "rustup" isn't an absolute path to a directory: not mounted into the build`) {
+		t.Errorf("no warning for a bad RUSTUP_HOME: %q", stderr.String())
 	}
 }
 

@@ -118,7 +118,8 @@ Day to day:
 | `XDG_CACHE_HOME` | | `~/.cache` | Holds `aurlock/`: git mirrors, builds, sources, packages and the keyring. |
 | `PAGER` | | `less` | Pager for `[v]`. |
 | `AURLOCK_AI` | | `claude -p --tools "" ...` | Replaces the second-opinion command. It runs through `sh` and gets the prompt on stdin. It must run without tools. |
-| `LANG`, `TERM`, `MAKEFLAGS` | | | Passed into the build sandbox. Nothing else from the environment is. |
+| `RUSTUP_HOME` | | `~/.rustup` | rustup's toolchains, mounted read-only into the build sandbox when the directory exists. |
+| `LANG`, `TERM`, `MAKEFLAGS`, `RUSTUP_TOOLCHAIN` | | | Passed into the build sandbox. Nothing else from the environment is. |
 | | `--noconfirm` | off | With `-S`: install approved packages without prompts, and skip any package that needs review with a message. Skips don't change the exit code; real failures do. It never approves anything. |
 | | `--needed` | off | With `-S`: skip packages installed at the approved commit. |
 | | `--removemake` | off | With `-S`: remove the make dependencies installed for the build. |
@@ -169,6 +170,8 @@ Every build runs in bubblewrap, and only after its commit is approved:
 5. The built packages you asked for are installed with `sudo pacman -U`.
 
 The sandbox mounts `/usr`, `/etc` and the pacman database read-only, with a fresh `/dev`, `/proc` and `/tmp`. It can write only the package's build, source and output directories. `$HOME` isn't mounted, so a build can't read SSH keys, browser profiles or tokens. The environment is cleared apart from a few variables, and nested user namespaces are disabled.
+
+The one exception to `$HOME` is rustup's toolchain directory (`RUSTUP_HOME`), so Rust packages build when rustup provides `rust`. It's mounted read-only, and it's readable in both steps, `settings.toml` included. rustup can't install anything during a build, so install the toolchains and components a package needs beforehand, and set a default (`rustup default stable`) or `RUSTUP_TOOLCHAIN`: per-directory overrides don't apply to the build directory. Toolchains linked or named by a path outside the rustup directory aren't visible. Cargo's own home stays empty inside the sandbox.
 
 If an offline build fails with what looks like a network error, aurlock says so. The next `aurlock install` of that package offers to grant network for that commit.
 

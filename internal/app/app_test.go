@@ -31,7 +31,7 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	h := &harness{t: t, aur: testaur.New(t), home: t.TempDir(), state: t.TempDir()}
 	t.Setenv("HOME", h.home)
-	for _, k := range []string{"XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "AURLOCK_AI"} {
+	for _, k := range []string{"XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "AURLOCK_AI", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN"} {
 		t.Setenv(k, "")
 	}
 	t.Setenv("PATH", testaur.Fakes(t, h.state)+":"+os.Getenv("PATH"))
