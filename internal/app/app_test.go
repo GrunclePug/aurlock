@@ -655,6 +655,48 @@ func TestUntracked(t *testing.T) {
 	}
 }
 
+// A local build can share an AUR package's name, and nothing installed
+// tells them apart: the local file names them, and they're never offered
+// for adoption or counted by outdated.
+func TestUntrackedLocal(t *testing.T) {
+	h := newHarness(t)
+	h.write("installed", h.read("installed")+"zen-browser-bin 1.23.1b-1\nrtk 1.2.0-1\n")
+	h.aur.SetInfo(testaur.Package{Name: "zen-browser-bin", Base: "zen-browser-bin", Version: "1.23.4b-1", Maintainer: "x"})
+	h.aur.SetInfo(testaur.Package{Name: "rtk", Base: "rtk", Version: "1.2.0-1", Maintainer: "x"})
+	local := filepath.Join(h.home, ".config", "aurlock", "local")
+	os.MkdirAll(filepath.Dir(local), 0o755)
+	os.WriteFile(local, []byte("# built from my own PKGBUILDs\nrtk  # pkg/rtk\n"), 0o644)
+
+	code, stdout, _ := h.run("", false, "list")
+	want := "untracked foreign packages (aurlock didn't install these):\n" +
+		"  rtk 1.2.0-1                 local build\n" +
+		"  zen-browser-bin 1.23.1b-1   AUR has 1.23.4b-1\n" +
+		"adopt them with: aurlock install <pkg>...\n"
+	if code != 0 || !strings.HasSuffix(stdout, want) {
+		t.Errorf("list: exit %d\n%s\nwant suffix\n%s", code, stdout, want)
+	}
+	if code, _, stderr := h.run("", false, "outdated"); code != 0 || stderr != "aurlock: 1 untracked AUR package, see aurlock list\n" {
+		t.Errorf("outdated: exit %d %q", code, stderr)
+	}
+
+	// Only local builds left: nothing to adopt.
+	h.write("installed", "glibc 2.42-1\nrtk 1.2.0-1\n")
+	code, stdout, _ = h.run("", false, "list")
+	if code != 0 || strings.Contains(stdout, "adopt") || !strings.HasSuffix(stdout, "  rtk 1.2.0-1   local build\n") {
+		t.Errorf("list: exit %d\n%s", code, stdout)
+	}
+
+	os.WriteFile(local, []byte("not/a/name\n"), 0o644)
+	if code, _, stderr := h.run("", false, "list"); code == 0 || !strings.Contains(stderr, "bad package name") {
+		t.Errorf("bad local file: exit %d %q", code, stderr)
+	}
+	// outdated still answers whether upgrade has work, and says why it
+	// can't count untracked packages.
+	if code, _, stderr := h.run("", false, "outdated"); code != 0 || !strings.Contains(stderr, "can't list untracked packages") || !strings.Contains(stderr, "bad package name") {
+		t.Errorf("outdated with a bad local file: exit %d %q", code, stderr)
+	}
+}
+
 func TestConflictWarning(t *testing.T) {
 	h := newHarness(t)
 	dir := filepath.Dir(h.approvedFile())

@@ -69,6 +69,7 @@ type app struct {
 
 type paths struct {
 	approved  string
+	local     string // packages built locally, not from the AUR
 	installed string
 	hints     string // packages whose offline build looked like a network failure
 	cache     string
@@ -86,8 +87,10 @@ func newPaths(getenv func(string) string) (paths, error) {
 		return filepath.Join(home, fallback)
 	}
 	state := filepath.Join(xdg("XDG_STATE_HOME", ".local/state"), "aurlock")
+	config := filepath.Join(xdg("XDG_CONFIG_HOME", ".config"), "aurlock")
 	return paths{
-		approved:  filepath.Join(xdg("XDG_CONFIG_HOME", ".config"), "aurlock", "approved"),
+		approved:  filepath.Join(config, "approved"),
+		local:     filepath.Join(config, "local"),
 		installed: filepath.Join(state, "installed"),
 		hints:     filepath.Join(state, "needs-network"),
 		cache:     filepath.Join(xdg("XDG_CACHE_HOME", ".cache"), "aurlock"),
@@ -338,6 +341,8 @@ func (a *app) list(ctx context.Context) int {
 	for _, u := range untracked {
 		where := "not in the AUR"
 		switch {
+		case u.local:
+			where = "local build"
 		case u.aur == unknown:
 			where = "AUR unreachable"
 		case u.aur != "":
@@ -355,7 +360,8 @@ func (a *app) list(ctx context.Context) int {
 
 type untrackedPkg struct {
 	name, version string
-	aur           string // AUR version, "" if not in the AUR
+	aur           string // AUR version, "" if not in the AUR or local
+	local         bool   // listed in the local file: never looked up
 }
 
 // unknown is the AUR version when the AUR can't be reached.
@@ -364,8 +370,14 @@ const unknown = "?"
 // untracked lists foreign packages aurlock didn't install: ones from
 // before aurlock, and locally built ones. They're shown, never adopted
 // automatically, since a local package can share an AUR package's name.
+// Nothing in an installed package tells the two apart, so the local file
+// names the local builds; they're never offered for adoption.
 func (a *app) untracked(ctx context.Context) ([]untrackedPkg, error) {
 	foreign, err := pacmanForeign(ctx)
+	if err != nil {
+		return nil, err
+	}
+	local, err := store.LoadLocal(a.paths.local)
 	if err != nil {
 		return nil, err
 	}
@@ -373,27 +385,36 @@ func (a *app) untracked(ctx context.Context) ([]untrackedPkg, error) {
 	if err != nil {
 		return nil, err
 	}
-	var names []string
+	var names, lookup []string
 	for name := range foreign {
 		if _, ok := log.Get(name); !ok {
 			names = append(names, name)
+			if !local[name] {
+				lookup = append(lookup, name)
+			}
 		}
 	}
 	slices.Sort(names)
 	if len(names) == 0 {
 		return nil, nil
 	}
-	info, err := a.rpc.Info(ctx, names)
-	if err != nil {
-		a.warnf("%v", err)
+	var info map[string]aur.Package
+	if len(lookup) > 0 {
+		if info, err = a.rpc.Info(ctx, lookup); err != nil {
+			a.warnf("%v", err)
+		}
 	}
 	var out []untrackedPkg
 	for _, n := range names {
-		u := untrackedPkg{name: n, version: foreign[n]}
-		if err != nil {
+		u := untrackedPkg{name: n, version: foreign[n], local: local[n]}
+		switch {
+		case u.local: // never looked up
+		case err != nil:
 			u.aur = unknown
-		} else if p, ok := info[n]; ok {
-			u.aur = p.Version
+		default:
+			if p, ok := info[n]; ok {
+				u.aur = p.Version
+			}
 		}
 		out = append(out, u)
 	}
@@ -476,7 +497,9 @@ func (a *app) outdated(ctx context.Context) int {
 		fmt.Fprintf(a.Stdout, "%s %s -> %s (%s)\n", in.PkgName, in.Version, version, state)
 	}
 	// Untracked packages don't count: outdated means upgrade has work.
-	if untracked, err := a.untracked(ctx); err == nil {
+	if untracked, err := a.untracked(ctx); err != nil {
+		a.warnf("can't list untracked packages: %v", err)
+	} else {
 		n := 0
 		for _, u := range untracked {
 			if u.aur != "" && u.aur != unknown {
