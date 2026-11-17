@@ -178,3 +178,53 @@ func TestSandboxChownUnderFakeroot(t *testing.T) {
 		t.Errorf("owners under fakeroot = %q, want root for all", out)
 	}
 }
+
+func TestCopyKeyring(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	for name, data := range map[string]string{"pubring.kbx": "keys", "trustdb.gpg": "trust", "gpg.conf": "dirmngr-program /x", "dirmngr.conf": "x"} {
+		os.WriteFile(filepath.Join(src, name), []byte(data), 0o644)
+	}
+	if err := CopyKeyring(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(dst)
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	if strings.Join(got, " ") != "pubring.kbx trustdb.gpg" {
+		t.Errorf("copied %v", got)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dst, "pubring.kbx")); string(data) != "keys" {
+		t.Errorf("pubring.kbx = %q", data)
+	}
+	// Something already in dst, such as a planted symlink, isn't written through.
+	target := filepath.Join(t.TempDir(), "approved")
+	os.WriteFile(target, []byte("approvals"), 0o644)
+	planted := t.TempDir()
+	os.Symlink(target, filepath.Join(planted, "pubring.kbx"))
+	if err := CopyKeyring(src, planted); err == nil {
+		t.Error("copied through a symlink")
+	}
+	if data, _ := os.ReadFile(target); string(data) != "approvals" {
+		t.Errorf("symlink target = %q", data)
+	}
+	// A keyring without a trust database yet.
+	os.Remove(filepath.Join(src, "trustdb.gpg"))
+	if err := CopyKeyring(src, t.TempDir()); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestResetEmptiesKeyring(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.GnuPG = filepath.Join(t.TempDir(), "gnupg-build", "foo")
+	os.MkdirAll(cfg.GnuPG, 0o700)
+	os.WriteFile(filepath.Join(cfg.GnuPG, "gpg.conf"), []byte("planted"), 0o600)
+	if err := Reset(cfg.Dirs); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(cfg.GnuPG); err != nil || len(entries) != 0 {
+		t.Errorf("keyring dir after Reset: %v %v", entries, err)
+	}
+}
