@@ -49,7 +49,7 @@ aurlock -version
 | `install <pkg>...` | Looks the packages up, fetches their git repositories, checks them, prompts, builds and installs. |
 | `upgrade` | Like `install`, for every package aurlock installed here whose AUR commit or approval moved on. |
 | `outdated` | Lists installed packages whose AUR commit differs from the installed one, and whether that commit is approved yet. Exit 1 if any, 0 if none, 2 on error. Untracked AUR packages are mentioned on stderr but don't count. |
-| `list` | Prints the approvals, the packages installed here, and foreign packages aurlock didn't install, with their AUR version if the AUR has them. |
+| `list` | Prints the approvals, the packages installed here, and foreign packages aurlock didn't install, with their AUR version if the AUR has them. Packages named in `~/.config/aurlock/local` show as local builds instead. |
 | `forget <pkg>...` | Drops approvals, by package base or package name. The packages stay installed. |
 
 A clean update:
@@ -93,7 +93,7 @@ aurlock install $(aurlock list | awk '/AUR has/ {print $1}')   # or every untrac
 sudo pacman -Rns yay                                           # then retire the old helper
 ```
 
-Adopting reviews each package at the AUR's current commit and rebuilds it, because nothing says which commit the installed build came from. All the prompts come first, then the builds. The last `install` line also picks up the old helper if it came from the AUR: answer `n` at its prompt. aurlock never adopts packages by itself, since a locally built package can share an AUR package's name.
+Adopting reviews each package at the AUR's current commit and rebuilds it, because nothing says which commit the installed build came from. All the prompts come first, then the builds. The last `install` line also picks up the old helper if it came from the AUR: answer `n` at its prompt. aurlock never adopts packages by itself, since a locally built package can share an AUR package's name. If you build some packages from your own PKGBUILDs, name them in `~/.config/aurlock/local` first, one per line: `list` then shows them as local builds, so the last `install` line doesn't replace them with the AUR's, and `outdated` doesn't count them.
 
 Day to day:
 
@@ -113,7 +113,7 @@ Day to day:
 
 | Variable | Flag | Default | Description |
 |----------|------|---------|-------------|
-| `XDG_CONFIG_HOME` | | `~/.config` | Holds `aurlock/approved`. |
+| `XDG_CONFIG_HOME` | | `~/.config` | Holds `aurlock/approved` and `aurlock/local`. |
 | `XDG_STATE_HOME` | | `~/.local/state` | Holds `aurlock/installed` and network hints. |
 | `XDG_CACHE_HOME` | | `~/.cache` | Holds `aurlock/`: git mirrors, builds, sources, packages and the keyring. |
 | `PAGER` | | `less` | Pager for `[v]`. |
@@ -128,6 +128,7 @@ Day to day:
 | Path | What | Shared |
 |------|------|--------|
 | `~/.config/aurlock/approved` | Approvals, one line per package base. | Yes, if you sync it. |
+| `~/.config/aurlock/local` | Packages built locally rather than from the AUR, one name per line, `#` comments allowed. aurlock only reads it. | If you like. |
 | `~/.local/state/aurlock/installed` | Which approved commit each installed package came from. | No |
 | `~/.local/state/aurlock/needs-network/` | Packages whose last offline build looked like a network failure. | No |
 | `~/.cache/aurlock/repos/<pkgbase>.git` | Bare mirror of the package's AUR git repository. | No |

@@ -100,6 +100,27 @@ type Installed struct {
 	Date    string
 }
 
+// LoadLocal reads the names of packages built locally rather than from
+// the AUR, one per line with '#' comments. A missing file is empty.
+func LoadLocal(path string) (map[string]bool, error) {
+	t, err := load(path, "", 1, func(f []string) error {
+		if !ValidName(f[0]) {
+			return fmt.Errorf("bad package name %q", f[0])
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]bool{}
+	for _, line := range t.lines {
+		if f := record(line); f != nil {
+			names[f[0]] = true
+		}
+	}
+	return names, nil
+}
+
 const installedHeader = "# pkgname  pkgbase  commit  version  installed"
 
 type InstallLog struct {
