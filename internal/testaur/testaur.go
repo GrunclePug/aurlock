@@ -241,7 +241,7 @@ case " $* " in
 *" --recv-keys "*)
 	seen=
 	for k; do
-		[ -n "$seen" ] && echo "$k" >> "$s/keys"
+		[ -n "$seen" ] && echo "$k" >> "$s/keys" && echo "$k" >> "$2/pubring.kbx"
 		[ "$k" = --recv-keys ] && seen=1
 	done
 	exit 0 ;;

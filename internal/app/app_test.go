@@ -788,6 +788,11 @@ func TestSignedSourcesKeyring(t *testing.T) {
 	if got := h.logLines("gpg --homedir"); len(got) == 0 || !strings.HasPrefix(got[0], "gpg --homedir "+keyring+" ") {
 		t.Errorf("gpg calls: %v", got)
 	}
+	// The build's copy has the fetched key (the fake gpg writes it to
+	// pubring.kbx in its --homedir).
+	if data, err := os.ReadFile(filepath.Join(buildKeys, "pubring.kbx")); err != nil || string(data) != fp+"\n" {
+		t.Errorf("build keyring pubring.kbx = %q, %v", data, err)
+	}
 	bw := h.logLines("bwrap")
 	if len(bw) != 2 {
 		t.Fatalf("bwrap calls: %v", bw)
