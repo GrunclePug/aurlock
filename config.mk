@@ -1,5 +1,5 @@
 # aurlock version
-VERSION = 0.4.1
+VERSION = 0.5.0
 
 # paths
 PREFIX = /usr/local
