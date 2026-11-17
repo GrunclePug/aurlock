@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -148,6 +149,13 @@ func depends(dep string) pkgOpt {
 func buildLine(line string) pkgOpt {
 	return func(p, i *string) {
 		*p = strings.Replace(*p, "package() {\n", "package() {\n  "+line+"\n", 1)
+	}
+}
+
+func validpgpkeys(fp string) pkgOpt {
+	return func(p, i *string) {
+		*p = strings.Replace(*p, "sha256sums=", "validpgpkeys=('"+fp+"')\nsha256sums=", 1)
+		*i = strings.Replace(*i, "\tsha256sums = ", "\tvalidpgpkeys = "+fp+"\n\tsha256sums = ", 1)
 	}
 }
 
@@ -719,5 +727,48 @@ func TestReviewText(t *testing.T) {
 	}
 	if strings.Contains(got, "==> .SRCINFO") || !strings.HasPrefix(got, "==> PKGBUILD <==") {
 		t.Errorf("order or .SRCINFO:\n%s", got)
+	}
+}
+
+// A build can write its keyring directory, so it gets a fresh copy of the
+// keyring: gpg runs outside the sandbox on the keyring itself, and must
+// never read files a build planted there.
+func TestSignedSourcesKeyring(t *testing.T) {
+	h := newHarness(t)
+	fp := strings.Repeat("A", 40)
+	h.publish("signed", "1.0-1", old, validpgpkeys(fp))
+	if code, stdout, stderr := h.run("y\n", true, "install", "signed"); code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, stdout, stderr)
+	}
+	cache := filepath.Join(h.home, ".cache", "aurlock")
+	keyring := filepath.Join(cache, "keyring")
+	buildKeys := filepath.Join(cache, "gnupg-build", "signed")
+	if got := h.logLines("gpg --homedir"); len(got) == 0 || !strings.HasPrefix(got[0], "gpg --homedir "+keyring+" ") {
+		t.Errorf("gpg calls: %v", got)
+	}
+	bw := h.logLines("bwrap")
+	if len(bw) != 2 {
+		t.Fatalf("bwrap calls: %v", bw)
+	}
+	for _, b := range bw {
+		if !strings.Contains(b, "--bind "+buildKeys+" "+buildKeys) || !strings.Contains(b, "--setenv GNUPGHOME "+buildKeys) {
+			t.Errorf("build keyring not mounted: %s", b)
+		}
+		if strings.Contains(b, keyring) || strings.Contains(b, filepath.Join(cache, "gnupg")+" ") {
+			t.Errorf("shared keyring mounted: %s", b)
+		}
+	}
+
+	// What a build wrote into its keyring directory is gone by the next build.
+	os.WriteFile(filepath.Join(buildKeys, "gpg.conf"), []byte("dirmngr-program /tmp/x\n"), 0o600)
+	h.publish("signed", "1.1-1", old, validpgpkeys(fp))
+	if code, stdout, stderr := h.run("y\n", true, "upgrade"); code != 0 {
+		t.Fatalf("upgrade: exit %d\n%s\n%s", code, stdout, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(buildKeys, "gpg.conf")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("planted gpg.conf survived: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(keyring, "gpg.conf")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("gpg.conf in the keyring: %v", err)
 	}
 }

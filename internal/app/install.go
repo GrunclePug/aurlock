@@ -561,7 +561,7 @@ func (a *app) build(ctx context.Context, opts options, t *target) (err error) {
 	}
 	keys := info.Base["validpgpkeys"]
 	if len(keys) > 0 {
-		dirs.GnuPG = filepath.Join(a.paths.cache, "gnupg")
+		dirs.GnuPG = filepath.Join(a.paths.cache, "gnupg-build", t.base)
 	}
 	if err := build.Reset(dirs); err != nil {
 		return err
@@ -570,7 +570,17 @@ func (a *app) build(ctx context.Context, opts options, t *target) (err error) {
 		return err
 	}
 	if len(keys) > 0 {
-		if err := build.ImportKeys(ctx, dirs.GnuPG, keys, a.Stderr); err != nil {
+		// The keyring is only ever used outside the sandbox; the build gets
+		// a copy. Not the old cache/gnupg, which earlier versions mounted
+		// into builds, so it may hold a planted gpg.conf.
+		keyring := filepath.Join(a.paths.cache, "keyring")
+		if err := os.MkdirAll(keyring, 0o700); err != nil {
+			return err
+		}
+		if err := build.ImportKeys(ctx, keyring, keys, a.Stderr); err != nil {
+			return err
+		}
+		if err := build.CopyKeyring(keyring, dirs.GnuPG); err != nil {
 			return err
 		}
 	}

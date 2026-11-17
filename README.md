@@ -132,7 +132,8 @@ Day to day:
 | `~/.local/state/aurlock/needs-network/` | Packages whose last offline build looked like a network failure. | No |
 | `~/.cache/aurlock/repos/<pkgbase>.git` | Bare mirror of the package's AUR git repository. | No |
 | `~/.cache/aurlock/build/`, `src/`, `pkg/` | Build directories, downloaded sources and built packages, one directory per package base. | No |
-| `~/.cache/aurlock/gnupg/` | Public keys for packages with signed sources. | No |
+| `~/.cache/aurlock/keyring/` | Public keys for packages with signed sources. Never mounted into a build. | No |
+| `~/.cache/aurlock/gnupg-build/` | Each build's copy of the keyring, made fresh for every build. | No |
 
 The approvals file is plain text, one record per line, `#` comments allowed:
 
@@ -162,7 +163,7 @@ Every build runs in bubblewrap, and only after its commit is approved:
 
 1. The build directory gets the reviewed files byte for byte, not a git checkout, so the repository's `.gitattributes` can't change what gets built.
 2. Dependencies are installed first with `sudo pacman -S --needed --asdeps`, since makepkg can't use sudo inside the sandbox. An AUR package that depends on another AUR package that isn't installed is refused: install that one first.
-3. **Sources, with network**: `makepkg --verifysource` downloads and verifies the sources. If the package lists `validpgpkeys`, aurlock first fetches those exact fingerprints from keyserver.ubuntu.com into its own keyring. Your `~/.gnupg` never enters the sandbox.
+3. **Sources, with network**: `makepkg --verifysource` downloads and verifies the sources. If the package lists `validpgpkeys`, aurlock first fetches those exact fingerprints from keyserver.ubuntu.com into its own keyring. The build gets a fresh copy of that keyring's keys and trust database, never the keyring itself, so nothing a build writes there reaches gpg outside the sandbox. Your `~/.gnupg` never enters the sandbox.
 4. **Build, offline**: `makepkg --holdver` runs with no network unless the approval grants it.
 5. The built packages you asked for are installed with `sudo pacman -U`.
 

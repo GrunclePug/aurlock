@@ -25,7 +25,10 @@ type Dirs struct {
 	Work    string // clean copy of the approved commit; makepkg's startdir
 	SrcDest string // downloaded sources, kept between builds
 	PkgDest string // built packages, emptied before each build
-	GnuPG   string // aurlock's public keyring, "" if not needed
+	// GnuPG is this build's copy of aurlock's public keyring (CopyKeyring),
+	// "" if not needed. The sandbox can write it, so it's never the keyring
+	// itself: gpg runs outside the sandbox on that one.
+	GnuPG string
 }
 
 type Config struct {
@@ -180,9 +183,55 @@ func Reset(d Dirs) error {
 		}
 	}
 	if d.GnuPG != "" {
+		// Fresh each build: nothing an earlier build wrote here, such as a
+		// gpg.conf, reaches this one.
+		if err := os.RemoveAll(d.GnuPG); err != nil {
+			return err
+		}
 		return os.MkdirAll(d.GnuPG, 0o700)
 	}
 	return nil
+}
+
+// keyringFiles are what gpg needs to verify signatures: the public keys and
+// the trust database. Config files (gpg.conf, dirmngr.conf, ...) aren't
+// copied.
+var keyringFiles = []string{"pubring.kbx", "trustdb.gpg"}
+
+// CopyKeyring copies the keyring at src into dst, a build's GnuPG
+// directory. A build gets a copy because it can write to its keyring
+// directory, and gpg reads options from there: a shared keyring would let
+// one build plant a gpg.conf that the next ImportKeys runs outside the
+// sandbox.
+func CopyKeyring(src, dst string) error {
+	for _, name := range keyringFiles {
+		data, err := os.ReadFile(filepath.Join(src, name))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := writeNew(filepath.Join(dst, name), data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeNew writes a file that mustn't exist yet: dst was just emptied, so
+// anything there, such as a symlink a concurrent build of the same package
+// planted, is refused rather than written through.
+func writeNew(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // WriteTree writes files into dir byte for byte, so the build sees exactly
