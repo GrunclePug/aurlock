@@ -152,6 +152,9 @@ func TestBuild(t *testing.T) {
 	for _, out := range []string{
 		"npm ERR! getaddrinfo EAI_AGAIN registry.npmjs.org\n",
 		"  [6] Could not resolve hostname (Could not resolve host: index.crates.io)\n",
+		// dotnet restore (opentabletdriver, stabilitymatrix)
+		"error NU1301: Unable to load the service index for source https://api.nuget.org/v3/index.json.\nerror NU1301:   Resource temporarily unavailable (api.nuget.org:443)\n",
+		"  Unhandled exception: Unable to load the service index for source https://api.nuget.org/v3/index.json.\n",
 	} {
 		os.WriteFile(filepath.Join(state, "build-fails"), []byte(out), 0o644)
 		err := Build(ctx, cfg)

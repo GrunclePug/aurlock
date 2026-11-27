@@ -200,7 +200,7 @@ func Build(ctx context.Context, cfg Config) error {
 	return nil
 }
 
-var networkError = regexp.MustCompile(`(?i)could not resolve|temporary failure in name resolution|name or service not known|network is unreachable|no route to host|failed to connect|getaddrinfo|eai_again|enotfound|failed to lookup address|dial tcp|connection refused`)
+var networkError = regexp.MustCompile(`(?i)could not resolve|temporary failure in name resolution|name or service not known|network is unreachable|no route to host|failed to connect|getaddrinfo|eai_again|enotfound|failed to lookup address|dial tcp|connection refused|unable to load the service index`)
 
 // run runs bwrap with the user seeing the output, and returns the tail of
 // that output.
